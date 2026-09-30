@@ -59,9 +59,13 @@ test('colors and badges', () => {
 });
 
 test('shQuote survives single quotes', () => {
-  const q = L.shQuote("it's a $(bad) `name`");
-  const out = execFileSync('/bin/bash', ['-c', `printf %s ${q}`]).toString();
-  assert.strictEqual(out, "it's a $(bad) `name`");
+  const input = "it's a $(bad) `name`";
+  const q = L.shQuote(input);
+  assert.strictEqual(q, "'it'\\''s a $(bad) `name`'");
+  if (process.platform === 'darwin') {
+    const out = execFileSync('/bin/bash', ['-c', `printf %s ${q}`]).toString();
+    assert.strictEqual(out, input);
+  }
 });
 
 test('plistXml round-trips through plutil', () => {
@@ -138,7 +142,7 @@ test('patchBundles rewrites relocation, neutralises env delete, injects shim, st
     a.writePatched(patched, replacements);
 
     // the reference implementation must read our output back identically
-    const js = asar.extractFile(patched, '.vite/build/index.js').toString();
+    const js = asar.extractFile(patched, path.join('.vite', 'build', 'index.js')).toString();
     assert.ok(js.includes(patch.SHIM_MARKER), 'shim injected');
     assert.ok(js.startsWith('"use strict";'), 'use strict stays first');
     assert.ok(js.includes('function Nu(){return a.app.getPath("userData")}'), 'relocation neutralised');
