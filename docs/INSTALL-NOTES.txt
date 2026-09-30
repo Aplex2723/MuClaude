@@ -1,0 +1,107 @@
+==========================================================
+Claude Multi-Instance Setup  v1.5
+      Run multiple Claude Desktop profiles on one machine
+==========================================================
+
+QUICK START
+-----------
+1. Double-click  Claude-Multi-Setup.exe
+2. Pick how many instances you want and name them (e.g. "Work")
+3. Pick a color and badge letters for each one (preview shown)
+4. Click  Continue, then  Install
+5. Open each new colored desktop shortcut and sign in separately
+   - each profile is fully isolated (accounts, files, settings)
+6. Done - all instances run simultaneously. Each window title
+   ("Claude - Work") and taskbar button shows which one it is.
+
+TIP: If you already set up instances before, the wizard detects them,
+pre-fills names/colors, and refreshes them without touching your profiles.
+
+CONTINUE AN EXISTING CLAUDE: under each instance the wizard shows
+"Continues existing profile ..." (keeps sign-in, chats, sessions) or
+"New profile ... starts fresh". Click  Profile...  to pick another
+existing folder. Renaming an instance keeps its data. Your main Claude
+(normal Claude icon) is never changed.
+
+REQUIREMENTS
+------------
+- Windows 10/11 - Claude Desktop installed from the Microsoft Store
+- Node.js is NOT needed.
+- macOS / Linux - build from source (see README.md); no patching required
+
+WHAT THE WIZARD DOES
+--------------------
+Windows (Store build):
+  - Copies the Claude app to %USERPROFILE%\ClaudeInstances\app so the
+    original install is never modified.
+  - Patches the copy so --user-data-dir is honoured (the managed-config
+    relocation to Claude-3p is bypassed) and disables the asar integrity
+    fuse on the copy.
+  - Runs a self-test before installing the copy; if anything fails, the
+    previous copy keeps working.
+  - Creates one colored desktop shortcut per instance.
+  - Optionally checks at sign-in whether Claude was updated and offers
+    to update the instances.
+  - Profiles live in %LOCALAPPDATA%\Claude-<Name>
+
+macOS:
+  - Creates one app per instance in ~/Applications ("Claude Work.app")
+    with its colored icon - open it from Spotlight, Launchpad, the
+    Desktop shortcut or the Dock. See MAC-QUICKSTART.md.
+Linux:
+  - Generates shell launchers + desktop entries with the colored icon.
+  - Profiles live in ~/Library/Application Support/Claude-<Name>  (mac)
+                     ~/.config/Claude-<Name>                      (Linux)
+
+CLI MODE (no window)
+--------------------
+  Claude-Multi-Setup.exe --cli Work,Personal,School
+  Claude-Multi-Setup.exe --cli --repair          (update after a Claude update)
+  add --no-update-check to turn off the sign-in reminder
+
+AFTER A CLAUDE UPDATE
+---------------------
+The Store updates the original Claude automatically. The extra instances
+stay on the version they were built from (they keep working, but miss
+the new version's fixes). After your next sign-in you are asked whether
+to update them - or re-run the wizard, or run  --cli --repair .
+Close the extra Claude windows first. Profiles, colors and shortcuts
+are preserved.
+
+TROUBLESHOOTING
+---------------
+Q: Only one instance opens when I double-click shortcuts
+A: Use the shortcuts created by the wizard ("Claude (<Name>)"), not the
+   original Claude shortcut.
+
+Q: "Claude process(es) are running from the patched copy"
+A: Close all extra Claude windows (check the system tray), then re-run.
+
+Q: "Could not locate the userData relocation code" / "Self-test failed"
+A: This Claude version changed its startup code in a way this tool does
+   not recognise yet. Your existing instances keep working on the
+   previous version; get an updated version of this tool.
+
+Q: Exit code -36861 when launching
+A: The integrity fuse is still active on the copied exe. Re-run the wizard.
+
+Q: Both instances land on the same profile
+A: Use the wizard's shortcuts; they pass --user-data-dir to the patched
+   copy. Re-run the wizard to recreate them.
+
+Q: An old taskbar pin opens the wrong thing
+A: Unpin it and pin the new colored desktop shortcut instead.
+
+FILES CREATED BY THE WIZARD
+---------------------------
+  %USERPROFILE%\ClaudeInstances\app\               shared patched Claude app
+  %USERPROFILE%\ClaudeInstances\Claude-<Name>.lnk  launcher (safe to pin)
+  %USERPROFILE%\ClaudeInstances\icons\             per-instance icons
+  %USERPROFILE%\ClaudeInstances\instances.json     names, colors, badges
+
+  %LOCALAPPDATA%\Claude-<Name>\     profile data (config, auth, history)
+  Desktop\Claude (<Name>).lnk       desktop shortcut per instance
+
+==========================================================
+  Questions / issues ->  open an issue at the project repo
+==========================================================

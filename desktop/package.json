@@ -1,0 +1,83 @@
+{
+  "name": "muclaude",
+  "productName": "MuClaude",
+  "version": "2.0.0",
+  "description": "Run several Claude Desktop accounts side by side (macOS and Windows).",
+  "main": "src/main/main.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node scripts/test-core.js",
+    "icons": "electron scripts/make-icons.js",
+    "screenshots": "electron scripts/shot-main.js docs-shots",
+    "dist:mac": "electron-builder --mac && codesign --verify --deep --strict \"dist/mac-arm64/MuClaude.app\"",
+    "install:mac": "bash scripts/install-mac.sh",
+    "dist:win": "electron-builder --win",
+    "selfcheck": "electron . --self-check"
+  },
+  "build": {
+    "appId": "com.muclaude.app",
+    "productName": "MuClaude",
+    "files": [
+      "src/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": false
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "npmRebuild": false,
+    "asar": true,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "dmg": {
+      "title": "MuClaude",
+      "icon": "build/icon.icns"
+    }
+  },
+  "devDependencies": {
+    "@electron/asar": "^3.2.0",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "author": "MuClaude",
+  "allowScripts": {
+    "electron-winstaller": false,
+    "electron@44.5.1": true
+  }
+}
