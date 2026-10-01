@@ -71,13 +71,73 @@ Alternatively, electron-builder accepts `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWOR
 packaged MuClaude signed with your development certificate. `install:mac` installs that
 local development app, not a public release.
 
-For GitHub releases, configure repository secrets `CSC_LINK` (base64 `.p12` containing
-Developer ID Application and its private key), `CSC_KEY_PASSWORD`, `APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Hosted runners do not have your local Keychain.
+### Automated draft releases (GitHub Actions)
+
+`.github/workflows/release.yml` runs when a `v*` tag is pushed:
+
+1. Verify the tag equals `v` + the version in `desktop/package.json`.
+2. Run `npm ci` and `npm test` on macOS and Windows.
+3. Build the signed, notarized Apple Silicon DMG and the Windows executables. macOS uses
+   `dist:mac`, including signature, stapled app ticket and Gatekeeper checks; no ad-hoc fallback.
+4. Upload the installers as workflow artifacts. A single dependent job refuses to overwrite
+   published releases and attaches both platforms to a **draft release**, only if every build
+   succeeds. Publishing remains a separate decision.
+
+#### One-time credentials setup
+
+Hosted runners do not have your local Keychain or the `MuClaude` notarytool profile.
+In the repository's **Settings → Secrets and variables → Actions**, configure:
+
+| Secret | Value |
+| --- | --- |
+| `CSC_LINK` | Base64 of an encrypted `.p12` containing **Developer ID Application and its private key** |
+| `CSC_KEY_PASSWORD` | Password protecting that `.p12` |
+| `APPLE_ID` | Apple account belonging to the Developer ID team |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password generated at `account.apple.com` |
+| `APPLE_TEAM_ID` | Team ID of the Developer ID certificate |
+
+Export only the intended Developer ID identity from Keychain Access; an Apple Development
+or Apple Distribution certificate is not a substitute. Keep the export outside the repository.
+You can upload the secrets with GitHub CLI without putting passwords in shell history:
+
+```bash
+base64 -i /path/outside/repo/DeveloperID.p12 | gh secret set CSC_LINK --repo Aplex2723/MuClaude
+gh secret set CSC_KEY_PASSWORD --repo Aplex2723/MuClaude
+gh secret set APPLE_ID --repo Aplex2723/MuClaude
+gh secret set APPLE_APP_SPECIFIC_PASSWORD --repo Aplex2723/MuClaude
+gh secret set APPLE_TEAM_ID --repo Aplex2723/MuClaude
+```
+
+The `gh secret set` commands without piped input prompt for the value. Never paste passwords
+into chat, commit certificate exports or print secret values in Actions logs. These credentials
+allow GitHub's runners to sign and notarize releases; restrict who can change release workflows.
+Missing secrets fail the macOS build with a list of missing **names**, not their values.
+
+#### Trigger a release
+
+Update `desktop/package.json` and `desktop/package-lock.json` for the next version
+(for example, `npm version patch --no-git-tag-version` from `desktop/`), commit the change,
+and merge it along with the workflow into `main`. From that updated main checkout:
+
+```bash
+VERSION=$(node -p "require('./desktop/package.json').version")
+git tag -a "v$VERSION" -m "Release $VERSION"
+git push origin "v$VERSION"
+```
+
+Do not reuse the already-published `v2.0.0` tag. Watch **Actions → Release**;
+on success the draft contains the `.dmg` and `.exe` downloads in **Releases**.
+Drafts are visible only to users with repository push access, not to the public.
+A failed platform prevents creation of a new release; successful build artifacts remain
+available in that workflow run for seven days. Before publication, retrying a tag's workflow
+can update its draft assets. After publication, use a new version and tag.
 
 Sources: [electron-builder macOS](https://www.electron.build/v26/docs/mac),
 [Electron notarization prerequisites](https://github.com/electron/notarize#prerequisites),
-[Keychain credentials](https://github.com/electron/notarize#usage-with-keychain-credentials).
+[Keychain credentials](https://github.com/electron/notarize#usage-with-keychain-credentials),
+[GitHub artifact sharing](https://docs.github.com/en/actions/tutorials/store-and-share-data),
+[draft release action](https://github.com/softprops/action-gh-release/tree/v2#customizing),
+[GitHub Actions secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions).
 
 ## How it works
 

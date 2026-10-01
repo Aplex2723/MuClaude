@@ -9,6 +9,9 @@
   signed-only test builds are kept in a separate output directory.
 - `install:mac` installs the signed local development build. GitHub macOS releases require
   signing and notarization secrets.
+- Version tags now create draft GitHub releases with the notarized macOS DMG and Windows
+  installers only after both platforms pass tests and build successfully. Published releases
+  cannot be overwritten, and tags must match the app version.
 
 ## v1.5 (2026-09-24)
 
