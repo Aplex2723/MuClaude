@@ -4,12 +4,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="dist/mac-arm64/MuClaude.app"
+APP="dist/development/mac-arm64/MuClaude.app"
 DEST="/Applications/MuClaude.app"
 
 if [ "${1:-}" != "--no-build" ]; then
   [ -d node_modules ] || npm install
-  npm run --silent dist:mac
+  npm run --silent build:mac:dev
 fi
 [ -d "$APP" ] || { echo "Build not found: $APP"; exit 1; }
 
@@ -22,4 +22,4 @@ rm -rf "$DEST"
 ditto "$APP" "$DEST"
 codesign --verify --deep --strict "$DEST"
 echo "Installed: $DEST"
-echo "First launch: right-click the app and choose Open (it is ad-hoc signed, not notarized)."
+echo "Local development build, signed with Apple Development; not notarized for distribution."

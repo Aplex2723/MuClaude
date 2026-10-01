@@ -1,26 +1,169 @@
 name: Release
+
 on:
   push:
     tags: ['v*']
-permissions: { contents: write }
+
+# Serialize retries for a tag without cancelling a build during notarization.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
-  build:
-    strategy:
-      matrix: { os: [macos-latest, windows-latest] }
-    runs-on: ${{ matrix.os }}
-    defaults: { run: { working-directory: desktop } }
+  validate:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22, cache: npm, cache-dependency-path: desktop/package-lock.json }
-      - run: npm ci
-      - run: npx electron-builder --mac --publish never
-        if: runner.os == 'macOS'
-      - run: npx electron-builder --win --publish never
-        if: runner.os == 'Windows'
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Only release commits already merged into main
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main || {
+            echo 'Release commits must reach main through a reviewed pull request first.' >&2
+            exit 1
+          }
+      - name: Check tag matches the app version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node <<'NODE'
+          const { version } = require('./desktop/package.json');
+          const expected = `v${version}`;
+          if (process.env.RELEASE_TAG !== expected) {
+            throw new Error(`Release tag must be ${expected}; update the app version before tagging.`);
+          }
+          NODE
+
+  # Tests and Windows packaging do not receive signing credentials.
+  test:
+    needs: validate
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        run: npm run dist:win -- --publish never
+      - name: Upload Windows installers
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-Windows
+          path: desktop/dist/*.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  build-macos:
+    needs: test
+    runs-on: macos-latest
+    timeout-minutes: 60
+    # Configure required reviewers and v* tag-only access BEFORE adding secrets.
+    # https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments
+    environment: release-signing
+    defaults:
+      run:
+        working-directory: desktop
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - name: Build, sign and notarize macOS
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          node <<'NODE'
+          const required = ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID',
+            'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'];
+          const missing = required.filter(key => !process.env[key]);
+          if (missing.length) {
+            throw new Error(`Configure these release-signing environment secrets: ${missing.join(', ')}`);
+          }
+          NODE
+          npm run dist:mac
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-macOS
+          path: desktop/dist/distribution/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  # Only this job can write a release, after BOTH platform builds succeed.
+  # https://docs.github.com/en/actions/tutorials/store-and-share-data
+  release:
+    needs: [test, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse to overwrite a published release
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        with:
+          script: |
+            let release;
+            try {
+              ({ data: release } = await github.rest.repos.getReleaseByTag({
+                ...context.repo,
+                tag: process.env.RELEASE_TAG,
+              }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (release && !release.draft) {
+              core.setFailed('This release is already published. Use a new version and tag.');
+            }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+      - name: Create or update the draft release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: MuClaude ${{ github.ref_name }}
+          draft: true
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
-            desktop/dist/*.dmg
-            desktop/dist/*.exe
+            release-assets/*.dmg
+            release-assets/*.exe

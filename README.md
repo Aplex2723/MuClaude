@@ -51,7 +51,7 @@ git clone https://github.com/Aplex2723/muClaude.git
 cd muClaude/desktop
 npm install
 npm start               # run from source
-npm run install:mac     # build MuClaude.app and copy it into /Applications
+npm run install:mac     # Apple Development build + copy into /Applications
 ```
 
 Requires [Claude Desktop](https://claude.ai/download) to be installed.
@@ -74,7 +74,7 @@ Profiles live in `~/ClaudeInstances`. Deeper notes on the security model and edg
 
 **Does it work with the old Python tool's instances?** Yes, MuClaude reads and writes the same `instances.json` manifest.
 
-**Why does macOS say the app is from an unidentified developer?** It is not notarized yet. Right-click, then Open, once.
+**Why does macOS say the app is from an unidentified developer?** Older releases and signed-only test builds are not notarized. Current source builds support Apple Development for local testing and Developer ID Application + notarization for distribution; see [macOS signing setup](desktop/README.md#macos-signing-and-notarization).
 
 ## Roadmap
 

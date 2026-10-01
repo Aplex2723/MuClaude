@@ -8,10 +8,12 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node scripts/test-core.js",
+    "test": "node scripts/test-core.js && node --test scripts/test-mac-build.js",
     "icons": "electron scripts/make-icons.js",
     "screenshots": "electron scripts/shot-main.js docs-shots",
-    "dist:mac": "electron-builder --mac && codesign --verify --deep --strict \"dist/mac-arm64/MuClaude.app\"",
+    "build:mac:dev": "node scripts/build-mac.js development",
+    "dist:mac": "node scripts/build-mac.js distribution",
+    "dist:mac:signed": "node scripts/build-mac.js signed",
     "install:mac": "bash scripts/install-mac.sh",
     "dist:win": "electron-builder --win",
     "selfcheck": "electron . --self-check"
@@ -31,7 +33,8 @@
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "build/icon.icns",
-      "identity": "-",
+      "type": "distribution",
+      "forceCodeSigning": true,
       "target": [
         {
           "target": "dir",
@@ -46,7 +49,9 @@
           ]
         }
       ],
-      "hardenedRuntime": false
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
       "icon": "build/icon.ico",
@@ -66,12 +71,14 @@
       "onlyLoadAppFromAsar": true
     },
     "dmg": {
+      "sign": true,
       "title": "MuClaude",
       "icon": "build/icon.icns"
     }
   },
   "devDependencies": {
     "@electron/asar": "^3.2.0",
+    "@electron/osx-sign": "^1.3.3",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3"
   },
