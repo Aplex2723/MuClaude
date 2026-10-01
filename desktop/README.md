@@ -75,18 +75,34 @@ local development app, not a public release.
 
 `.github/workflows/release.yml` runs when a `v*` tag is pushed:
 
-1. Verify the tag equals `v` + the version in `desktop/package.json`.
-2. Run `npm ci` and `npm test` on macOS and Windows.
-3. Build the signed, notarized Apple Silicon DMG and the Windows executables. macOS uses
-   `dist:mac`, including signature, stapled app ticket and Gatekeeper checks; no ad-hoc fallback.
+1. Verify the tagged commit is already in `main` and the tag equals `v` + the version
+   in `desktop/package.json`. Changes to `main` must be merged through a pull request;
+   the workflow never commits or pushes to `main`.
+2. Run `npm ci` and `npm test` on macOS and Windows, and build the Windows executables,
+   without signing secrets.
+3. Wait for approval of the protected `release-signing` environment, then build the signed,
+   notarized Apple Silicon DMG in a separate job. macOS uses `dist:mac`, including signature,
+   stapled app ticket and Gatekeeper checks; no ad-hoc fallback.
 4. Upload the installers as workflow artifacts. A single dependent job refuses to overwrite
    published releases and attaches both platforms to a **draft release**, only if every build
    succeeds. Publishing remains a separate decision.
 
+All Actions in CI and release workflows are pinned to full commit SHAs, and checkouts do not
+persist Git credentials. The signing job does not restore caches from other jobs.
+
 #### One-time credentials setup
 
 Hosted runners do not have your local Keychain or the `MuClaude` notarytool profile.
-In the repository's **Settings → Secrets and variables → Actions**, configure:
+A repository **administrator** must first create **Settings → Environments → release-signing**:
+
+- Add the signing identity's owner (`santgabo`) as a required reviewer. If that same person
+  creates release tags, allow self-review so they can authorize use of their own identity.
+- Set deployment branches and tags to **Selected branches and tags**, with only a **tag**
+  rule matching `v*`. Do not add a branch rule or allow all branches.
+- Configure protection before uploading secrets. Merely referencing an environment in a
+  workflow can create it without protection; that is not sufficient.
+
+Keep the following secrets in **that environment**, not as repository-wide secrets:
 
 | Secret | Value |
 | --- | --- |
@@ -101,17 +117,21 @@ or Apple Distribution certificate is not a substitute. Keep the export outside t
 You can upload the secrets with GitHub CLI without putting passwords in shell history:
 
 ```bash
-base64 -i /path/outside/repo/DeveloperID.p12 | gh secret set CSC_LINK --repo Aplex2723/MuClaude
-gh secret set CSC_KEY_PASSWORD --repo Aplex2723/MuClaude
-gh secret set APPLE_ID --repo Aplex2723/MuClaude
-gh secret set APPLE_APP_SPECIFIC_PASSWORD --repo Aplex2723/MuClaude
-gh secret set APPLE_TEAM_ID --repo Aplex2723/MuClaude
+base64 -i /path/outside/repo/DeveloperID.p12 | gh secret set CSC_LINK --env release-signing --repo Aplex2723/MuClaude
+gh secret set CSC_KEY_PASSWORD --env release-signing --repo Aplex2723/MuClaude
+gh secret set APPLE_ID --env release-signing --repo Aplex2723/MuClaude
+gh secret set APPLE_APP_SPECIFIC_PASSWORD --env release-signing --repo Aplex2723/MuClaude
+gh secret set APPLE_TEAM_ID --env release-signing --repo Aplex2723/MuClaude
 ```
 
 The `gh secret set` commands without piped input prompt for the value. Never paste passwords
 into chat, commit certificate exports or print secret values in Actions logs. These credentials
-allow GitHub's runners to sign and notarize releases; restrict who can change release workflows.
-Missing secrets fail the macOS build with a list of missing **names**, not their values.
+allow GitHub's runners to sign and notarize releases; restrict who can change release workflows
+and create release tags. Protect `main` with required pull requests. A reviewer must check the
+workflow and tagged commit before approving signing; the ancestry check alone cannot stop a
+malicious workflow edit. Base64 is encoding, not encryption, and the build necessarily has
+access to both the `.p12` and its password while signing. Missing secrets fail the macOS build
+with a list of missing **names**, not their values.
 
 #### Trigger a release
 
@@ -125,8 +145,10 @@ git tag -a "v$VERSION" -m "Release $VERSION"
 git push origin "v$VERSION"
 ```
 
-Do not reuse the already-published `v2.0.0` tag. Watch **Actions → Release**;
-on success the draft contains the `.dmg` and `.exe` downloads in **Releases**.
+Do not reuse the already-published `v2.0.0` tag. Watch **Actions → Release**, review the
+commit/workflow and approve the `release-signing` deployment when prompted. The rest of the
+build, notarization and draft creation is automatic; on success the draft contains the `.dmg`
+and `.exe` downloads in **Releases**.
 Drafts are visible only to users with repository push access, not to the public.
 A failed platform prevents creation of a new release; successful build artifacts remain
 available in that workflow run for seven days. Before publication, retrying a tag's workflow
@@ -137,7 +159,9 @@ Sources: [electron-builder macOS](https://www.electron.build/v26/docs/mac),
 [Keychain credentials](https://github.com/electron/notarize#usage-with-keychain-credentials),
 [GitHub artifact sharing](https://docs.github.com/en/actions/tutorials/store-and-share-data),
 [draft release action](https://github.com/softprops/action-gh-release/tree/v2#customizing),
-[GitHub Actions secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions).
+[GitHub Actions secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions),
+[environment protection](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
+[Actions security](https://docs.github.com/en/actions/reference/security/secure-use).
 
 ## How it works
 
