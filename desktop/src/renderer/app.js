@@ -106,8 +106,8 @@
 
   // ---------- rendering ----------
   function renderBrand() {
-    const c = $('brandMark'); c.width = 56; c.height = 56; c.style.width = '28px'; c.style.height = '28px';
-    IR.paint(c, 28, '#D97757', '');
+    // Brand mark is now the static app icon (see index.html <img id="brandMark">).
+    // Kept as a no-op so callers don't need to change.
   }
 
   function renderChip() {
@@ -144,7 +144,7 @@
   }
 
   function welcome() {
-    const cv = h('canvas', { 'aria-hidden': 'true' }); IR.paint(cv, 84, '#D97757', '');
+    const cv = h('img', { src: 'app-icon.png', width: 84, height: 84, class: 'app-mark', alt: '', 'aria-hidden': 'true' });
     const c = state.info.claude;
     const feat = (t, d) => h('div', { class: 'feature' }, h('b', { text: t }), h('span', { text: d }));
     return h('div', { class: 'welcome' }, h('div', { class: 'pane-top' }), cv,

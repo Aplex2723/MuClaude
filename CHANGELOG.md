@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- macOS builds now use Apple Development for local testing and Developer ID Application
+  for direct distribution, with Hardened Runtime and no ad-hoc signing fallback.
+- Public DMG builds require notarization credentials and embed the notarized, stapled app;
+  signed-only test builds are kept in a separate output directory.
+- `install:mac` installs the signed local development build. GitHub macOS releases require
+  signing and notarization secrets.
+
 ## v1.5 (2026-09-24)
 
 ### New

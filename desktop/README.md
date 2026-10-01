@@ -14,18 +14,70 @@ Claude Desktop accounts side by side. It replaces the old Tkinter wizard (still 
 cd desktop
 npm install
 npm start               # run from source (development only)
-npm test                # 21 core tests (temp HOME + fake Claude.app; touches nothing real)
+npm test                # core tests (temp HOME + fake Claude.app) + signing configuration tests
 npm run selfcheck       # launches the real window and confirms the UI rendered
-npm run dist:mac        # -> dist/mac-arm64/MuClaude.app and dist/MuClaude-<ver>-arm64.dmg
-npm run install:mac     # build + copy into /Applications (add -- --no-build to reuse the last build)
+npm run build:mac:dev   # Apple Development -> dist/development/mac-arm64/MuClaude.app
+npm run dist:mac        # Developer ID + notarized app -> dist/distribution/*.dmg (credentials required)
+npm run dist:mac:signed # Developer ID -> dist/signed/*.dmg; NOT notarized, testing only
+npm run install:mac     # development build + copy into /Applications (-- --no-build to reuse it)
 npm run dist:win        # run on Windows -> portable exe + installer
 npm run icons           # regenerate build/icon.* from the in-app drawing routine
 ```
 
 **Using it as a normal Mac app:** run `npm run install:mac`, or open the `.dmg` and drag
 *MuClaude* to *Applications*. After that, launch it from Spotlight or Launchpad like any other
-app; no terminal or npm needed. It is ad-hoc signed, not notarized, so the first time right-click it
-and choose **Open**. This is an Apple Silicon build (an Intel build is untested).
+app; no terminal or npm needed. Builds now require real Apple signing identities: there is no
+ad-hoc fallback. Only `dist:mac` produces a notarized app for public distribution.
+This is an Apple Silicon build (an Intel build is untested).
+
+### macOS signing and notarization
+
+Certificates must be installed in the Keychain **with their private keys**:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+- **Local development:** `Apple Development`. No notarization or App Store provisioning profile.
+  `electron-builder` v26 does not select this certificate for non-MAS apps, so a custom
+  signing hook uses `@electron/osx-sign`. If several developers' identities exist, select one
+  with `MUCLAUDE_DEV_IDENTITY="<certificate SHA-1>" npm run build:mac:dev`.
+- **Direct distribution:** `Developer ID Application`, not `Apple Distribution`.
+  Both the app and the DMG are signed. The app uses Hardened Runtime and only the
+  `com.apple.security.cs.allow-jit` entitlement, including its helpers. Library validation stays enabled.
+- **Release:** `dist:mac` requires notarization credentials, notarizes and staples the app
+  before creating the signed DMG, then verifies its app ticket and Gatekeeper acceptance.
+  The ticket is attached to the app inside the DMG, not to the DMG container itself.
+  Missing credentials or failed signing/notarization fail the build instead of producing
+  a successful-looking unsigned or unnotarized release.
+
+Recommended: keep notarization credentials in the Keychain. Run this in your own terminal;
+`notarytool` prompts for your **app-specific Apple password**, so do not paste it into chat or git:
+
+```bash
+xcrun notarytool store-credentials "MuClaude" \
+  --apple-id "YOUR_APPLE_ID" \
+  --team-id "YOUR_TEAM_ID"
+
+APPLE_KEYCHAIN_PROFILE=MuClaude npm run dist:mac
+```
+
+An existing profile works too: set `APPLE_KEYCHAIN_PROFILE` to its name.
+Alternatively, electron-builder accepts `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` +
+`APPLE_TEAM_ID`, or `APPLE_API_KEY` (path to a `.p8` team key) + `APPLE_API_KEY_ID` +
+`APPLE_API_ISSUER`. Never commit credentials or certificate exports.
+
+`npm start` runs the bundled development Electron binary; use `build:mac:dev` to test a
+packaged MuClaude signed with your development certificate. `install:mac` installs that
+local development app, not a public release.
+
+For GitHub releases, configure repository secrets `CSC_LINK` (base64 `.p12` containing
+Developer ID Application and its private key), `CSC_KEY_PASSWORD`, `APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. Hosted runners do not have your local Keychain.
+
+Sources: [electron-builder macOS](https://www.electron.build/v26/docs/mac),
+[Electron notarization prerequisites](https://github.com/electron/notarize#prerequisites),
+[Keychain credentials](https://github.com/electron/notarize#usage-with-keychain-credentials).
 
 ## How it works
 
