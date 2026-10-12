@@ -8,14 +8,35 @@ jobs:
     strategy:
       matrix: { os: [macos-latest, windows-latest] }
     runs-on: ${{ matrix.os }}
+    environment: release
     defaults: { run: { working-directory: desktop } }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: desktop/package-lock.json }
       - run: npm ci
-      - run: npx electron-builder --mac --publish never
+      # Developer ID signing + notarization (electron-builder staples the ticket).
+      # CSC_LINK / CSC_KEY_PASSWORD: electron-builder imports the .p12 into a temp keychain.
+      # APPLE_*: credentials used by notarytool. The -c.mac.* flags override the
+      # ad-hoc defaults in package.json, which stay as-is for local builds.
+      - run: >
+          npx electron-builder --mac --publish never
+          -c.mac.identity="${{ vars.APPLE_SIGNING_IDENTITY }}"
+          -c.mac.hardenedRuntime=true
+          -c.mac.notarize=true
         if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      - name: Verify signature and notarization
+        if: runner.os == 'macOS'
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/mac-arm64/MuClaude.app
+          xcrun stapler validate dist/mac-arm64/MuClaude.app
+          spctl --assess --type execute --verbose dist/mac-arm64/MuClaude.app
       - run: npx electron-builder --win --publish never
         if: runner.os == 'Windows'
       - uses: softprops/action-gh-release@v2
