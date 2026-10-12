@@ -40,13 +40,15 @@ jobs:
       # The identity is found in the keychain imported above.
       # APPLE_*: credentials used by notarytool. The -c.mac.* flags override the
       # ad-hoc defaults in package.json, which stay as-is for local builds.
+      # electron-builder rejects the "Developer ID Application: " prefix, so strip it.
       - run: >
           npx electron-builder --mac --publish never
-          -c.mac.identity="${{ vars.APPLE_SIGNING_IDENTITY }}"
+          -c.mac.identity="${APPLE_SIGNING_IDENTITY#Developer ID Application: }"
           -c.mac.hardenedRuntime=true
           -c.mac.notarize=true
         if: runner.os == 'macOS'
         env:
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
