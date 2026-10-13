@@ -38,7 +38,8 @@ test('binds Google routing to the selected profile without carrying credentials'
   const cfg = JSON.parse(fs.readFileSync(children[0].args[1], 'utf8'));
   assert.equal(cfg.profileDir, "/tmp/home with spaces/Claude-PersonalO'Brien");
   assert.equal(cfg.claudeApp, '/Applications/Claude.app');
-  assert.equal(fs.statSync(children[0].args[1]).mode & 0o777, 0o600);
+  // Windows has no POSIX permission bits: Node reports every writable file as 0o666.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(children[0].args[1]).mode & 0o777, 0o600);
   assert.equal(Object.hasOwn(cfg, 'url'), false);
 });
 
