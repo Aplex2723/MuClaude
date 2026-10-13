@@ -7,16 +7,25 @@
   "private": true,
   "license": "MIT",
   "scripts": {
+    "dev": "node scripts/dev.js",
+    "predev": "npm run build:login-router",
+    "prestart": "npm run build:login-router",
     "start": "electron .",
-    "test": "node scripts/test-core.js",
+    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js",
+    "build:login-router": "node scripts/build-login-router.js",
+    "test:google-native": "node scripts/test-google-native.js",
+    "test:google-ui": "electron scripts/test-google-ui.js",
+    "install:cli": "node scripts/install-code-cli.js",
     "icons": "electron scripts/make-icons.js",
     "screenshots": "electron scripts/shot-main.js docs-shots",
     "dist:mac": "electron-builder --mac && codesign --verify --deep --strict \"dist/mac-arm64/MuClaude.app\"",
     "install:mac": "bash scripts/install-mac.sh",
     "dist:win": "electron-builder --win",
-    "selfcheck": "electron . --self-check"
+    "selfcheck": "electron . --self-check",
+    "test:code-ui": "electron scripts/test-code-ui.js"
   },
   "build": {
+    "beforePack": "scripts/before-pack.js",
     "appId": "com.muclaude.app",
     "productName": "MuClaude",
     "files": [
@@ -32,6 +41,9 @@
       "category": "public.app-category.utilities",
       "icon": "build/icon.icns",
       "identity": "-",
+      "extraResources": [
+        { "from": "build/login-router/MuClaude Login Router.app", "to": "MuClaude Login Router.app" }
+      ],
       "target": [
         {
           "target": "dir",
@@ -57,6 +69,9 @@
     },
     "npmRebuild": false,
     "asar": true,
+    "extraResources": [
+      { "from": "src/code", "to": "code-cli" }
+    ],
     "electronFuses": {
       "runAsNode": false,
       "enableCookieEncryption": true,

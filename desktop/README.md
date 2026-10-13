@@ -13,8 +13,11 @@ Claude Desktop accounts side by side. It replaces the old Tkinter wizard (still 
 ```bash
 cd desktop
 npm install
-npm start               # run from source (development only)
-npm test                # 21 core tests (temp HOME + fake Claude.app; touches nothing real)
+npm run dev             # build native sign-in helper + run from source; provides `muclaude-dev` until you stop it
+npm test                # Desktop + Code tests in temporary homes
+npm run test:google-native # callback delivery between real disposable macOS processes
+npm run test:google-ui   # per-instance sign-in UI + IPC checks in a temporary home
+npm run install:cli     # standalone muclaude command in ~/.local/bin (macOS)
 npm run selfcheck       # launches the real window and confirms the UI rendered
 npm run dist:mac        # -> dist/mac-arm64/MuClaude.app and dist/MuClaude-<ver>-arm64.dmg
 npm run install:mac     # build + copy into /Applications (add -- --no-build to reuse the last build)
@@ -28,6 +31,25 @@ app; no terminal or npm needed. It is ad-hoc signed, not notarized, so the first
 and choose **Open**. This is an Apple Silicon build (an Intel build is untested).
 
 ## How it works
+
+Claude Code profile usage and the exact sharing boundary are documented in the
+[main README](../README.md#claude-code-profiles-macos). The plain Node CLI lives in
+`src/code/`; packaged apps include the same files outside the ASAR at
+`Contents/Resources/code-cli`, so installing the command from the window does not
+need Electron to run it. Node.js 18+ and Claude Code must be on the terminal's PATH.
+The window's **Uninstall…** button and `muclaude uninstall` remove the command and, if asked,
+the profile data (`src/code/uninstall.js`); see the main README.
+Code profiles do not use Desktop's `instances.json` or its data directories.
+
+On macOS, select a Desktop instance and use **Sign in with Google** before clicking
+**Continue with Google** in Claude. A native helper temporarily receives browser
+returns and sends the original callback to the selected running PID. It checks the
+process's executable and exact profile arguments again before delivery, keeps
+Claude's nonce validation, and never saves the callback URL. Click **Done / Cancel
+routing** when finished. The previous `claude://` handler is restored on return,
+cancel, timeout, or quitting; unrelated Claude links keep their previous handler.
+The helper is compiled by `npm run dev`, `npm start`, and `npm run dist:mac`; packaged
+apps include the executable and do not need Swift or Node for this feature.
 
 Same behavior and file layout as the Python version, so existing instances keep working.
 

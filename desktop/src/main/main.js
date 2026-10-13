@@ -8,12 +8,23 @@ const setup = require('./core/setup');
 const remove = require('./core/remove');
 const startup = require('./core/startup');
 const updateCheck = require('./core/update-check');
+const codeProfiles = require('../code/profiles');
+const { installCli } = require('../code/install');
+const { uninstallCode, formatReport } = require('../code/uninstall');
+const { createGoogleLogin } = require('./core/google-login');
+const { macAppPath, macClaudeBundle } = require('./core/launcher');
 
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
+const cliTarget = () => (app.isPackaged ? path.join(process.resourcesPath, 'code-cli', 'cli.js') : path.join(__dirname, '..', 'code', 'cli.js'));
 const isMac = process.platform === 'darwin';
 let win = null;
 let dirtyCount = 0; // unapplied changes reported by the renderer
 let applying = false;
+const googleLogin = isMac ? createGoogleLogin({
+  helperApp: app.isPackaged ? path.join(process.resourcesPath, 'MuClaude Login Router.app')
+    : path.join(__dirname, '../../build/login-router/MuClaude Login Router.app'),
+  stateDir: path.join(P.HOME, 'Library/Application Support/MuClaude/google-sign-in'),
+}) : null;
 
 // ---- window ------------------------------------------------------------------
 
@@ -91,6 +102,37 @@ function registerIpc() {
   handle('app:init', () => describeState());
   handle('state:dirty', (_e, n) => { dirtyCount = Number.isInteger(n) && n > 0 && n < 1000 ? n : 0; });
 
+  handle('code:list', () => {
+    if (!isMac) throw new Error('Code profiles currently support macOS only.');
+    const store = codeProfiles.createStore(P.HOME);
+    return { profiles: store.list(), root: store.root };
+  });
+  handle('code:create', (_e, name) => {
+    if (!isMac) throw new Error('Code profiles currently support macOS only.');
+    const store = codeProfiles.createStore(P.HOME);
+    name = str(name, 40);
+    if (['create', 'list', 'path'].includes(name)) throw new Error('That name is reserved for terminal commands.');
+    if (store.list().includes(name)) throw new Error('That Code profile already exists.');
+    return { name, dir: store.prepare(name).dir };
+  });
+  handle('code:install-cli', () => installCli({ home: P.HOME, target: cliTarget() }));
+  handle('code:uninstall', async () => {
+    if (!isMac) throw new Error('Code profiles currently support macOS only.');
+    const profiles = codeProfiles.createStore(P.HOME).list();
+    // The confirmation lives here so the window cannot trigger a data deletion on its own.
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Cancel', 'Remove command only', 'Remove command and profile data'], defaultId: 0, cancelId: 0,
+      message: 'Uninstall the muclaude terminal command?',
+      detail: `${profiles.length ? `Profiles: ${profiles.join(', ')}.` : 'There are no Code profiles yet.'}\n\n`
+        + '“Remove command only” deletes ~/.local/bin/muclaude and keeps your profiles.\n\n'
+        + '“Remove command and profile data” also signs each profile out and permanently deletes its account, history and memory. Skills and settings in ~/.claude are kept.\n\n'
+        + 'Close any running muclaude sessions first.',
+    });
+    if (response === 0) return { cancelled: true };
+    const report = await uninstallCode({ home: P.HOME, deleteData: response === 2 });
+    return { cancelled: false, message: formatReport(report).join(' ') };
+  });
+
   handle('profiles:list', () => P.profileFolders().map((f) => ({ ...f, label: f.name })));
 
   handle('profile:info', (_e, dir) => {
@@ -109,6 +151,7 @@ function registerIpc() {
   });
 
   handle('setup:apply', async (event, cfg) => {
+    if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before applying instance changes.' };
     if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.instances) || cfg.instances.length > 50) throw new Error('bad argument');
     const clean = {
       updateCheck: cfg.updateCheck !== false,
@@ -125,6 +168,7 @@ function registerIpc() {
   });
 
   handle('instances:remove', async (event, opts) => {
+    if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before removing an instance.' };
     if (!opts || !Array.isArray(opts.names) || opts.names.length > 100) throw new Error('bad argument');
     const log = (line) => { if (!event.sender.isDestroyed()) event.sender.send('setup:log', line); };
     applying = true;
@@ -141,6 +185,24 @@ function registerIpc() {
     const err = await shell.openPath(target);
     return { ok: !err, message: err };
   });
+
+  handle('google-login:begin', async (_e, name) => {
+    if (!googleLogin) return { ok: false, message: 'Google sign-in routing currently supports macOS only.' };
+    if (applying || googleLogin.status().active) return { ok: false, message: 'Finish or cancel the current operation first.' };
+    const inst = P.loadManifest().find((i) => i.name.toLowerCase() === str(name, 200).toLowerCase());
+    if (!inst || P.validateNames([inst.name]).length) return { ok: false, message: 'Apply this instance before signing in.' };
+    return googleLogin.begin({ name: inst.name, profileDir: inst.profile_dir || P.profileDir(P.safeName(inst.name)) }, async (cancelled) => {
+      const installs = await P.findClaude();
+      if (cancelled()) return null;
+      if (!installs.length) throw new Error('CLAUDE_NOT_FOUND');
+      const err = await shell.openPath(macAppPath(P.HOME, inst.name));
+      if (cancelled()) return null;
+      if (err) throw new Error('INSTANCE_OPEN_FAILED');
+      return macClaudeBundle(installs[0].exePath);
+    });
+  });
+  handle('google-login:status', () => googleLogin ? googleLogin.status() : { active: false, status: 'unavailable' });
+  handle('google-login:cancel', () => googleLogin ? googleLogin.cancel() : { active: false });
 
   handle('folder:reveal', (_e, dir) => { const d = str(dir); if (require('fs').existsSync(d)) shell.showItemInFolder(d); });
 }
@@ -179,6 +241,14 @@ async function selfCheck() {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  let cancellingLoginForQuit = false;
+  app.on('before-quit', (event) => {
+    if (!googleLogin?.status().active) return;
+    event.preventDefault();
+    if (cancellingLoginForQuit) return;
+    cancellingLoginForQuit = true;
+    googleLogin.cancel().then(() => { cancellingLoginForQuit = false; app.quit(); });
+  });
   app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
   app.whenReady().then(async () => {
