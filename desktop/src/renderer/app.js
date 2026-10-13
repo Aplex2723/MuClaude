@@ -28,10 +28,11 @@
   };
 
   const state = {
-    info: null, list: [], sel: null, nextId: 1, problems: [], profileData: new Map(), mode: 'choose', busy: false, updateCheck: true,
+    info: null, list: [], sel: null, nextId: 1, problems: [], profileData: new Map(), mode: 'choose', busy: false, updateCheck: true, googleLogin: null,
   };
   let ui = {};
   let validateSeq = 0; let validateTimer = null; let toastTimer = null;
+  let googleTimer = null;
 
   // ---------- helpers ----------
   const safeName = (n) => n.trim().replace(/ /g, '');
@@ -167,8 +168,45 @@
         h('p', { class: 'lede', text: 'What would you like to do with this instance?' }),
         h('div', { class: 'choose-actions' },
           h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: () => openNow(i) }, 'Open'),
-          h('button', { class: 'btn btn-ghost btn-lg', type: 'button', onclick: () => { state.mode = 'edit'; renderMain(); } }, 'Edit')),
+          h('button', { class: 'btn btn-ghost btn-lg', type: 'button', onclick: () => { state.mode = 'edit'; renderMain(); } }, 'Edit'),
+          isMac ? h('button', { class: 'btn btn-ghost btn-lg', type: 'button', 'data-action': 'google-login', disabled: !!state.googleLogin?.active,
+            onclick: () => beginGoogleLogin(i) }, 'Sign in with Google') : null),
+        googleLoginPanel(),
         h('p', { class: 'hint', text: 'Tip: double-click an instance in the list to open it right away.' })));
+  }
+
+  function googleLoginPanel() {
+    const login = state.googleLogin;
+    if (!login) return null;
+    const message = login.active ? (login.status === 'starting'
+      ? `Preparing Google sign-in for ${login.name}…`
+      : `In ${login.name}, click Continue with Google and finish in your browser. Click Done when signed in. Routing expires after 15 minutes.`)
+      : login.status === 'forwarded' ? `Google's response was sent to ${login.name}. Finish signing in in that Claude window.`
+      : login.message || (login.status === 'expired' ? 'Google sign-in routing expired. Start again to retry.' : 'Google sign-in routing ended.');
+    return h('div', { class: 'google-login-note', role: 'status' }, h('p', { text: message }),
+      login.active ? h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: async () => {
+        state.googleLogin = await window.mc.cancelGoogleLogin(); clearInterval(googleTimer); renderMain();
+      } }, 'Done / Cancel routing') : null);
+  }
+
+  async function beginGoogleLogin(i) {
+    if (state.busy || state.googleLogin?.active) return;
+    if (!i.orig || isDirty(i)) { toast('Apply this instance before signing in.'); return; }
+    state.googleLogin = { active: true, status: 'starting', name: i.orig.name }; renderMain();
+    try {
+      const result = await window.mc.beginGoogleLogin(i.orig.name);
+      state.googleLogin = result;
+      if (!result.ok && result.status !== 'cancelled') { state.googleLogin = { ...result, active: false, status: 'error' }; toast(result.message || 'Could not prepare Google sign-in.'); }
+      else {
+        clearInterval(googleTimer);
+        googleTimer = setInterval(async () => {
+          const next = await window.mc.googleLoginStatus();
+          if (JSON.stringify(next) !== JSON.stringify(state.googleLogin)) { state.googleLogin = next; renderMain(); }
+          if (!next.active) clearInterval(googleTimer);
+        }, 1000);
+      }
+    } catch (_) { state.googleLogin = { active: false, status: 'error', message: 'Could not prepare Google sign-in. Please try again.' }; }
+    renderMain();
   }
 
   async function openNow(i) {
@@ -432,6 +470,18 @@
     $('applyTitle').textContent = title; $('applySub').textContent = sub;
   }
 
+  async function refreshCodeProfiles() {
+    const info = await window.mc.listCodeProfiles();
+    $('codeProfiles').replaceChildren(...(info.profiles.length
+      ? info.profiles.map((name) => h('p', {}, h('code', { text: `muclaude code ${name}` })))
+      : [h('p', { text: 'No Code profiles yet. Create one here or launch it from your terminal.' })]));
+  }
+  async function openCodeProfiles() {
+    $('codeMessage').textContent = '';
+    try { await refreshCodeProfiles(); $('codeDlg').showModal(); }
+    catch (error) { toast(error.message); }
+  }
+
   // settings
   function openSettings() {
     const body = $('settingsBody'); body.replaceChildren();
@@ -473,6 +523,23 @@
     $('applyBtn').addEventListener('click', () => apply());
     $('discardBtn').addEventListener('click', discard);
     $('settingsBtn').addEventListener('click', openSettings);
+    $('codeBtn').hidden = !isMac;
+    $('codeBtn').addEventListener('click', openCodeProfiles);
+    $('codeClose').addEventListener('click', () => $('codeDlg').close());
+    $('codeForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        const result = await window.mc.createCodeProfile($('codeName').value);
+        $('codeName').value = ''; $('codeMessage').textContent = `Created ${result.name}. Run muclaude code ${result.name} and sign in to its account.`;
+        await refreshCodeProfiles();
+      } catch (error) { $('codeMessage').textContent = error.message; }
+    });
+    $('codeInstall').addEventListener('click', async () => {
+      try {
+        const result = await window.mc.installCodeCli();
+        $('codeMessage').textContent = `Installed ${result.command}. Put ~/.local/bin first on PATH. You can close MuClaude and use the command.`;
+      } catch (error) { $('codeMessage').textContent = error.message; }
+    });
     $('settingsClose').addEventListener('click', () => $('settingsDlg').close());
     $('browseBtn').addEventListener('click', browseProfile);
     $('profileCancel').addEventListener('click', () => $('profileDlg').close());

@@ -25,3 +25,4 @@ Thumbs.db
 desktop/node_modules/
 desktop/dist/
 desktop/docs-shots/
+desktop/build/login-router/
