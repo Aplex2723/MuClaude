@@ -10,10 +10,12 @@ const startup = require('./core/startup');
 const updateCheck = require('./core/update-check');
 const codeProfiles = require('../code/profiles');
 const { installCli } = require('../code/install');
+const { uninstallCode, formatReport } = require('../code/uninstall');
 const { createGoogleLogin } = require('./core/google-login');
 const { macAppPath, macClaudeBundle } = require('./core/launcher');
 
 const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
+const cliTarget = () => (app.isPackaged ? path.join(process.resourcesPath, 'code-cli', 'cli.js') : path.join(__dirname, '..', 'code', 'cli.js'));
 const isMac = process.platform === 'darwin';
 let win = null;
 let dirtyCount = 0; // unapplied changes reported by the renderer
@@ -113,9 +115,23 @@ function registerIpc() {
     if (store.list().includes(name)) throw new Error('That Code profile already exists.');
     return { name, dir: store.prepare(name).dir };
   });
-  handle('code:install-cli', () => installCli({ home: P.HOME, target: app.isPackaged
-    ? path.join(process.resourcesPath, 'code-cli', 'cli.js')
-    : path.join(__dirname, '..', 'code', 'cli.js') }));
+  handle('code:install-cli', () => installCli({ home: P.HOME, target: cliTarget() }));
+  handle('code:uninstall', async () => {
+    if (!isMac) throw new Error('Code profiles currently support macOS only.');
+    const profiles = codeProfiles.createStore(P.HOME).list();
+    // The confirmation lives here so the window cannot trigger a data deletion on its own.
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Cancel', 'Remove command only', 'Remove command and profile data'], defaultId: 0, cancelId: 0,
+      message: 'Uninstall the muclaude terminal command?',
+      detail: `${profiles.length ? `Profiles: ${profiles.join(', ')}.` : 'There are no Code profiles yet.'}\n\n`
+        + '“Remove command only” deletes ~/.local/bin/muclaude and keeps your profiles.\n\n'
+        + '“Remove command and profile data” also signs each profile out and permanently deletes its account, history and memory. Skills and settings in ~/.claude are kept.\n\n'
+        + 'Close any running muclaude sessions first.',
+    });
+    if (response === 0) return { cancelled: true };
+    const report = await uninstallCode({ home: P.HOME, deleteData: response === 2 });
+    return { cancelled: false, message: formatReport(report).join(' ') };
+  });
 
   handle('profiles:list', () => P.profileFolders().map((f) => ({ ...f, label: f.name })));
 

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('mc', {
   listCodeProfiles: () => ipcRenderer.invoke('code:list'),
   createCodeProfile: (name) => ipcRenderer.invoke('code:create', name),
   installCodeCli: () => ipcRenderer.invoke('code:install-cli'),
+  uninstallCodeCli: () => ipcRenderer.invoke('code:uninstall'),
   setDirty: (n) => ipcRenderer.invoke('state:dirty', n),
   listProfiles: () => ipcRenderer.invoke('profiles:list'),
   profileInfo: (dir) => ipcRenderer.invoke('profile:info', dir),

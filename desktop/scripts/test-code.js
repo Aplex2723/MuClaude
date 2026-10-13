@@ -186,3 +186,169 @@ test('CLI launches simultaneous profiles in one cwd, scrubs inherited Claude aut
   assert.equal(fs.readFileSync(path.join(memory(x), 'MEMORY.md'), 'utf8'), 'x');
   assert.match(execFileSync(process.execPath, [cli, 'code', 'list'], { env, encoding: 'utf8' }), /x\ny/);
 });
+
+const cliTarget = path.join(__dirname, '../src/code/cli.js');
+const lstatOrNull = (file) => { try { return fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } };
+// A `claude` stand-in that records `auth logout` calls, like the real command's environment contract.
+function fakeClaude(dir, log) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'claude'), `#!${process.execPath}\n`
+    + `require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), dir: process.env.CLAUDE_CONFIG_DIR, key: process.env.ANTHROPIC_API_KEY }) + '\\n');\n`, { mode: 0o755 });
+  return dir;
+}
+const calls = (log) => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : []);
+// A home with two profiles, shared Claude configuration to protect, and an unrelated MuClaude directory.
+function uninstallHome(name) {
+  const h = path.join(tmp, name);
+  fs.mkdirSync(path.join(h, '.claude/skills'), { recursive: true });
+  fs.writeFileSync(path.join(h, '.claude/skills/canary'), 'keep');
+  write(path.join(h, '.claude/settings.json'), { model: 'sonnet' });
+  fs.mkdirSync(path.join(h, 'Library/Application Support/MuClaude/google-sign-in'), { recursive: true });
+  fs.writeFileSync(path.join(h, 'Library/Application Support/MuClaude/google-sign-in/state'), 'keep');
+  const s = Code.createStore(h);
+  s.prepare('x'); s.prepare('y');
+  return { h, s, binDir: path.join(h, '.local/bin') };
+}
+
+test('CLI installation replaces its own stale links but never a foreign command', () => {
+  const { installCli } = require('../src/code/install');
+  const binDir = path.join(tmp, 'own-bin'); fs.mkdirSync(binDir);
+  const command = path.join(binDir, 'muclaude');
+  for (const stale of ['/gone/worktree/desktop/src/code/cli.js', '/Applications/Old.app/Contents/Resources/code-cli/cli.js']) {
+    fs.symlinkSync(stale, command);
+    assert.equal(installCli({ target: cliTarget, binDir }).backup, null);
+    assert.equal(fs.readlinkSync(command), cliTarget);
+    fs.unlinkSync(command);
+  }
+  fs.symlinkSync('/usr/bin/true', command);
+  assert.throws(() => installCli({ target: cliTarget, binDir }), /left untouched/);
+  assert.equal(fs.readlinkSync(command), '/usr/bin/true');
+  assert.equal(installCli({ target: cliTarget, binDir, name: 'muclaude-dev' }).command, path.join(binDir, 'muclaude-dev'));
+  assert.throws(() => installCli({ target: cliTarget, binDir, name: '../escape' }), /Invalid command name/);
+});
+
+test('removeCli and pruneStaleCli only remove MuClaude links', () => {
+  const { removeCli, pruneStaleCli } = require('../src/code/install');
+  const binDir = path.join(tmp, 'remove-bin'); fs.mkdirSync(binDir);
+  const link = (name, to) => fs.symlinkSync(to, path.join(binDir, name));
+  assert.equal(removeCli({ binDir }).status, 'absent');
+  link('muclaude', cliTarget);
+  assert.equal(removeCli({ binDir, target: '/another/worktree/desktop/src/code/cli.js' }).status, 'foreign');
+  assert.ok(lstatOrNull(path.join(binDir, 'muclaude')));
+  assert.equal(removeCli({ binDir, target: cliTarget }).status, 'removed');
+  assert.equal(lstatOrNull(path.join(binDir, 'muclaude')), null);
+  link('muclaude', '/usr/bin/true');
+  assert.equal(removeCli({ binDir }).status, 'foreign');
+  assert.equal(fs.readlinkSync(path.join(binDir, 'muclaude')), '/usr/bin/true');
+  fs.unlinkSync(path.join(binDir, 'muclaude')); fs.writeFileSync(path.join(binDir, 'muclaude'), 'regular');
+  assert.equal(removeCli({ binDir }).status, 'foreign');
+  fs.unlinkSync(path.join(binDir, 'muclaude'));
+  link('muclaude', '/gone/a/desktop/src/code/cli.js');        // deleted worktree
+  link('muclaude-dev', '/gone/b/desktop/src/code/cli.js');    // deleted worktree
+  link('muclaude-live', cliTarget);                           // target exists
+  link('other-tool', '/gone/c/desktop/src/code/cli.js');      // not a muclaude name
+  assert.deepEqual(pruneStaleCli({ binDir }).map((f) => path.basename(f)).sort(), ['muclaude', 'muclaude-dev']);
+  assert.deepEqual(fs.readdirSync(binDir).sort(), ['muclaude-live', 'other-tool']);
+});
+
+test('uninstall with data signs out each profile, deletes private data, and spares shared configuration', async () => {
+  const { uninstallCode } = require('../src/code/uninstall');
+  const { installCli } = require('../src/code/install');
+  const { h, binDir } = uninstallHome('uninstall-data');
+  installCli({ home: h, target: cliTarget, binDir });
+  const log = path.join(tmp, 'logout.log');
+  const env = { ...process.env, ANTHROPIC_API_KEY: 'wrong-account', PATH: fakeClaude(path.join(tmp, 'fake-claude'), log) + path.delimiter + process.env.PATH };
+  const result = await uninstallCode({ home: h, binDir, deleteData: true, env });
+  assert.deepEqual(result.profiles, ['x', 'y']);
+  assert.deepEqual(result.warnings, []);
+  assert.equal(result.dataRemoved, true);
+  assert.equal(result.command.status, 'removed');
+  assert.deepEqual(calls(log).map((c) => [c.argv, path.basename(c.dir), c.key]), [[['auth', 'logout'], 'x', undefined], [['auth', 'logout'], 'y', undefined]]);
+  const support = path.join(h, 'Library/Application Support/MuClaude');
+  assert.equal(fs.existsSync(path.join(support, 'code')), false);
+  assert.equal(fs.readFileSync(path.join(support, 'google-sign-in/state'), 'utf8'), 'keep');
+  // Profiles linked skills from ~/.claude; those links must be removed without being followed.
+  assert.equal(fs.readFileSync(path.join(h, '.claude/skills/canary'), 'utf8'), 'keep');
+  assert.deepEqual(read(path.join(h, '.claude/settings.json')), { model: 'sonnet' });
+  assert.equal(lstatOrNull(path.join(binDir, 'muclaude')), null);
+});
+
+test('uninstall keeps profile data by default, and warns instead of failing when claude is unavailable', async () => {
+  const { uninstallCode } = require('../src/code/uninstall');
+  const { installCli } = require('../src/code/install');
+  const { h, binDir } = uninstallHome('uninstall-keep');
+  installCli({ home: h, target: cliTarget, binDir });
+  const log = path.join(tmp, 'keep.log');
+  const env = { ...process.env, PATH: fakeClaude(path.join(tmp, 'fake-claude-keep'), log) + path.delimiter + process.env.PATH };
+  const kept = await uninstallCode({ home: h, binDir, env });
+  assert.equal(kept.dataRemoved, false);
+  assert.deepEqual(calls(log), []);
+  assert.equal(kept.command.status, 'removed');
+  assert.ok(fs.existsSync(path.join(h, 'Library/Application Support/MuClaude/code/profiles/x/settings.json')));
+  assert.equal((await uninstallCode({ home: h, binDir, env })).command.status, 'absent');
+  const emptyBin = path.join(tmp, 'no-claude'); fs.mkdirSync(emptyBin);
+  const removed = await uninstallCode({ home: h, binDir, deleteData: true, env: { ...process.env, PATH: emptyBin } });
+  assert.equal(removed.dataRemoved, true);
+  assert.match(removed.warnings.join('\n'), /Claude Code was not found/);
+  assert.equal(fs.existsSync(path.join(h, 'Library/Application Support/MuClaude/code')), false);
+});
+
+test('uninstall refuses to delete data through a symlinked data directory', async () => {
+  const { uninstallCode } = require('../src/code/uninstall');
+  const { h, binDir } = uninstallHome('uninstall-symlink');
+  const base = path.join(h, 'Library/Application Support/MuClaude/code');
+  const moved = path.join(tmp, 'elsewhere'); fs.renameSync(base, moved);
+  fs.symlinkSync(moved, base);
+  await assert.rejects(uninstallCode({ home: h, binDir, deleteData: true, logout: false }), /symlink|Refusing/i);
+  assert.ok(fs.existsSync(path.join(moved, 'profiles/x')));
+});
+
+test('muclaude uninstall asks for an explicit choice without a terminal, then cleans up', () => {
+  const h = uninstallHome('uninstall-cli');
+  const log = path.join(tmp, 'cli-logout.log');
+  const env = { ...process.env, HOME: h.h, PATH: fakeClaude(path.join(tmp, 'fake-claude-cli'), log) + path.delimiter + process.env.PATH };
+  const run = (...args) => { try { return { code: 0, out: execFileSync(process.execPath, [cliTarget, ...args], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; } catch (e) { return { code: e.status, out: String(e.stdout), err: String(e.stderr) }; } };
+  require('../src/code/install').installCli({ home: h.h, target: cliTarget, binDir: h.binDir });
+  assert.match(run('uninstall').err, /--keep-data or --delete-data/);
+  assert.match(run('uninstall', '--delete-data').err, /needs --yes/);
+  assert.match(run('uninstall', '--keep-data', '--delete-data').err, /either/);
+  assert.ok(lstatOrNull(path.join(h.binDir, 'muclaude')));
+  const done = run('uninstall', '--delete-data', '--yes');
+  assert.equal(done.code, 0, done.err);
+  assert.match(done.out, /Removed the terminal command/);
+  assert.match(done.out, /Deleted Claude Code profile data \(x, y\)/);
+  assert.equal(calls(log).length, 2);
+  assert.equal(lstatOrNull(path.join(h.binDir, 'muclaude')), null);
+  assert.equal(fs.existsSync(path.join(h.h, 'Library/Application Support/MuClaude/code')), false);
+  assert.equal(fs.readFileSync(path.join(h.h, '.claude/skills/canary'), 'utf8'), 'keep');
+});
+
+test('npm run dev keeps muclaude-dev only while the server runs', async () => {
+  const devHome = path.join(tmp, 'dev-home'); const binDir = path.join(devHome, '.local/bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const link = path.join(binDir, 'muclaude-dev');
+  fs.symlinkSync('/gone/worktree/desktop/src/code/cli.js', path.join(binDir, 'muclaude'));
+  const dev = path.join(__dirname, 'dev.js');
+  const drive = (childCode) => spawn(process.execPath, ['-e',
+    `require(${JSON.stringify(dev)}).main({ command: process.execPath, args: ['-e', ${JSON.stringify(childCode)}] }).then((code) => process.exit(code))`,
+    ], { env: { ...process.env, HOME: devHome }, stdio: 'ignore' });
+  const until = async (check) => { for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 50)); return check(); };
+  const exit = (child) => new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+
+  const server = drive('setInterval(() => {}, 1000)'); const stopped = exit(server);
+  assert.ok(await until(() => lstatOrNull(link)), 'link appears when the server starts');
+  assert.equal(fs.readlinkSync(link), cliTarget);
+  assert.equal(lstatOrNull(path.join(binDir, 'muclaude')), null, 'a link to a deleted worktree is pruned');
+  server.kill('SIGINT');                                    // Ctrl+C
+  assert.deepEqual(await stopped, { code: 143, signal: null });
+  assert.equal(lstatOrNull(link), null, 'link is removed on Ctrl+C');
+
+  const quick = drive('process.exit(3)');
+  assert.equal((await exit(quick)).code, 3);
+  assert.equal(lstatOrNull(link), null, 'link is removed after a normal exit');
+
+  fs.writeFileSync(link, 'someone else');                   // a foreign file is never replaced or removed
+  const guarded = drive('process.exit(0)');
+  assert.equal((await exit(guarded)).code, 0);
+  assert.equal(fs.readFileSync(link, 'utf8'), 'someone else');
+});

@@ -12,6 +12,14 @@ const CONFIG_KEYS = ['mcpServers', 'theme', 'editorMode', 'verbose', 'preferredN
 const PRIVATE_SETTINGS = new Set(['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'gcpAuthRefresh', 'otelHeadersHelper', 'forceLoginMethod', 'forceLoginOrgUUID', 'autoMemoryDirectory', 'sshConfigs']);
 const PRIVATE_ENV = /^(ANTHROPIC_|CLAUDE_SECURESTORAGE_CONFIG_DIR$|CLAUDE_CODE_(OAUTH|API_KEY|USE_|HOST_|PROVIDER_|PROJECT_DIR_NAME)|CLAUDE_CONFIG_DIR$|CLAUDE_CODE_(SUBAGENT_MODEL|REMOTE|SESSION)|AWS_|GOOGLE_|GCLOUD_|AZURE_)/i;
 
+/** Environment for a Claude process bound to one profile: inherited credentials removed. */
+function cleanEnv(env, dir) {
+  const out = { ...env };
+  for (const key of Object.keys(out)) if (PRIVATE_ENV.test(key)) delete out[key];
+  out.CLAUDE_CONFIG_DIR = dir;
+  return out;
+}
+
 function stat(file) { try { return fs.lstatSync(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
 function readJson(file, privateFile = false) {
   if (!stat(file)) return {};
@@ -145,7 +153,7 @@ function createStore(home = os.homedir()) {
   return { root, sharedDir, profilePath, list, prepare, finish, synchronize };
 }
 
-module.exports = { createStore, PRIVATE_ENV };
+module.exports = { createStore, cleanEnv, PRIVATE_ENV };
 // Executed only by lockf; the baseline stays in a private file, never in argv.
 if (require.main === module && process.argv[2] === '--sync') {
   try {

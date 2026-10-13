@@ -540,6 +540,14 @@
         $('codeMessage').textContent = `Installed ${result.command}. Put ~/.local/bin first on PATH. You can close MuClaude and use the command.`;
       } catch (error) { $('codeMessage').textContent = error.message; }
     });
+    $('codeUninstall').addEventListener('click', async () => {
+      try {
+        const result = await window.mc.uninstallCodeCli();
+        if (result.cancelled) return;
+        $('codeMessage').textContent = result.message;
+        await refreshCodeProfiles();
+      } catch (error) { $('codeMessage').textContent = error.message; }
+    });
     $('settingsClose').addEventListener('click', () => $('settingsDlg').close());
     $('browseBtn').addEventListener('click', browseProfile);
     $('profileCancel').addEventListener('click', () => $('profileDlg').close());

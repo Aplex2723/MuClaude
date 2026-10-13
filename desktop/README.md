@@ -13,7 +13,7 @@ Claude Desktop accounts side by side. It replaces the old Tkinter wizard (still 
 ```bash
 cd desktop
 npm install
-npm run dev             # build native sign-in helper + run from source
+npm run dev             # build native sign-in helper + run from source; provides `muclaude-dev` until you stop it
 npm test                # Desktop + Code tests in temporary homes
 npm run test:google-native # callback delivery between real disposable macOS processes
 npm run test:google-ui   # per-instance sign-in UI + IPC checks in a temporary home
@@ -37,6 +37,8 @@ Claude Code profile usage and the exact sharing boundary are documented in the
 `src/code/`; packaged apps include the same files outside the ASAR at
 `Contents/Resources/code-cli`, so installing the command from the window does not
 need Electron to run it. Node.js 18+ and Claude Code must be on the terminal's PATH.
+The window's **Uninstall…** button and `muclaude uninstall` remove the command and, if asked,
+the profile data (`src/code/uninstall.js`); see the main README.
 Code profiles do not use Desktop's `instances.json` or its data directories.
 
 On macOS, select a Desktop instance and use **Sign in with Google** before clicking

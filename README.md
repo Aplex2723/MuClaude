@@ -115,7 +115,21 @@ Claude credential helpers, login restrictions, provider credentials/routing and 
 
 This uses Claude's [documented multiple-account support](https://code.claude.com/docs/en/authentication#log-in-with-multiple-accounts). Claude Console sign-ins **without an API key** are stored outside the configuration directory and are not isolated by Claude's mechanism; use claude.ai accounts or a profile-local API key instead. No existing sign-in is imported automatically. Fresh profiles require their own login.
 
-The installer refuses to replace a command at its destination. To deliberately replace one while keeping a backup, use `npm run install:cli -- --bin-dir /absolute/bin/path --replace`. Removing the installed symlink uninstalls the command; profile data and shared Claude configuration remain on disk.
+The installer refuses to replace a command it did not create. It does replace its own earlier link (for example after moving the app or deleting the checkout it pointed to). To deliberately replace someone else's command while keeping a backup, use `npm run install:cli -- --bin-dir /absolute/bin/path --replace`.
+
+### Uninstall
+
+Click **Uninstall…** in the **Claude Code profiles** window, or run:
+
+```bash
+muclaude uninstall                 # asks whether to delete profile data
+muclaude uninstall --keep-data     # only removes the command
+muclaude uninstall --delete-data --yes
+```
+
+The command is removed only if it is a MuClaude link. With data deletion, each profile is signed out through `claude auth logout` (clearing its Keychain entry) and `~/Library/Application Support/MuClaude/code` is deleted, including accounts, history and automatic memory. `~/.claude` (skills, settings), `~/.claude.json`, Desktop instances and Google sign-in data are never touched. Close running `muclaude code` sessions first, then move MuClaude.app to the Trash. If Claude Code is not on PATH, profiles are still deleted but a sign-in may remain in Keychain Access.
+
+When working from a checkout, `npm run dev` provides a `muclaude-dev` command for as long as the dev server runs and removes it when the server stops, so no link to a short-lived worktree is left behind. It never touches `muclaude`.
 
 ## How it works
 

@@ -7,7 +7,7 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "dev": "electron .",
+    "dev": "node scripts/dev.js",
     "predev": "npm run build:login-router",
     "prestart": "npm run build:login-router",
     "start": "electron .",
