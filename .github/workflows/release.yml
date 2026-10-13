@@ -60,9 +60,38 @@ jobs:
           spctl --assess --type execute --verbose dist/mac-arm64/MuClaude.app
       - run: npx electron-builder --win --publish never
         if: runner.os == 'Windows'
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: |
+          name: dist-${{ runner.os }}
+          path: |
             desktop/dist/*.dmg
             desktop/dist/*.exe
+          if-no-files-found: error
+
+  # One job publishes the release so the notes are written once, not once per OS.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      # Notes list every commit since the previous stable tag with its author,
+      # instead of GitHub's PR-only notes (direct pushes would be left out).
+      - name: Write release notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --exclude '*-*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          RANGE=${PREV:+$PREV..}$GITHUB_REF_NAME
+          {
+            echo "## Changes"
+            git log --no-merges --format='* %s (%h) — %an' "$RANGE"
+            [ -n "$PREV" ] && echo && echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$GITHUB_REF_NAME"
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/*.dmg
+            dist/*.exe
