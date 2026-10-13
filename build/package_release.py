@@ -49,6 +49,7 @@ def main(ver: str) -> None:
     files += [os.path.join(ROOT, f) for f in
               ("run.py", "requirements.txt", "README.md", "MAC-QUICKSTART.md", "start-mac.sh",
                "icon.icns", "icon.png", "icon.ico")]
+    files.append(os.path.join(ROOT, "assets", "app-icon.png"))
     mac = os.path.join(out, f"Claude-Multi-Setup-{ver}-macOS.zip")
     with zipfile.ZipFile(mac, "w") as z:
         for f in files:

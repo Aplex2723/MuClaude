@@ -15,19 +15,40 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: desktop/package-lock.json }
       - run: npm ci
+      # Import the Developer ID .p12 into our own keychain instead of passing CSC_LINK:
+      # electron-builder 26.x unlocks its temp keychain with the .p12 password
+      # (set-key-partition-list -k), which fails with "passphrase not correct".
+      - name: Import signing certificate
+        if: runner.os == 'macOS'
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          echo "$MAC_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          security find-identity -v -p codesigning "$KEYCHAIN"
       # Developer ID signing + notarization (electron-builder staples the ticket).
-      # CSC_LINK / CSC_KEY_PASSWORD: electron-builder imports the .p12 into a temp keychain.
+      # The identity is found in the keychain imported above.
       # APPLE_*: credentials used by notarytool. The -c.mac.* flags override the
       # ad-hoc defaults in package.json, which stay as-is for local builds.
+      # electron-builder rejects the "Developer ID Application: " prefix, so strip it.
       - run: >
           npx electron-builder --mac --publish never
-          -c.mac.identity="${{ vars.APPLE_SIGNING_IDENTITY }}"
+          -c.mac.identity="${APPLE_SIGNING_IDENTITY#Developer ID Application: }"
           -c.mac.hardenedRuntime=true
           -c.mac.notarize=true
         if: runner.os == 'macOS'
         env:
-          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
@@ -39,9 +60,38 @@ jobs:
           spctl --assess --type execute --verbose dist/mac-arm64/MuClaude.app
       - run: npx electron-builder --win --publish never
         if: runner.os == 'Windows'
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
-          files: |
+          name: dist-${{ runner.os }}
+          path: |
             desktop/dist/*.dmg
             desktop/dist/*.exe
+          if-no-files-found: error
+
+  # One job publishes the release so the notes are written once, not once per OS.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      # Notes list every commit since the previous stable tag with its author,
+      # instead of GitHub's PR-only notes (direct pushes would be left out).
+      - name: Write release notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --exclude '*-*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          RANGE=${PREV:+$PREV..}$GITHUB_REF_NAME
+          {
+            echo "## Changes"
+            git log --no-merges --format='* %s (%h) — %an' "$RANGE"
+            [ -n "$PREV" ] && echo && echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$GITHUB_REF_NAME"
+          } > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/*.dmg
+            dist/*.exe

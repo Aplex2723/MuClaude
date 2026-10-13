@@ -22,7 +22,7 @@ npm run selfcheck       # launches the real window and confirms the UI rendered
 npm run dist:mac        # -> dist/mac-arm64/MuClaude.app and dist/MuClaude-<ver>-arm64.dmg
 npm run install:mac     # build + copy into /Applications (add -- --no-build to reuse the last build)
 npm run dist:win        # run on Windows -> portable exe + installer
-npm run icons           # regenerate build/icon.* from the in-app drawing routine
+npm run icons           # regenerate build/icon.* from ../assets/app-icon.png
 ```
 
 **Using it as a normal Mac app:** run `npm run install:mac`, or open the `.dmg` and drag
