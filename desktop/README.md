@@ -51,6 +51,15 @@ cancel, timeout, or quitting; unrelated Claude links keep their previous handler
 The helper is compiled by `npm run dev`, `npm start`, and `npm run dist:mac`; packaged
 apps include the executable and do not need Swift or Node for this feature.
 
+On macOS the app is a menu-bar app (`src/main/core/menubar.js`): a template-image `Tray` whose native menu
+lists one row per Desktop instance, rebuilt on every click so created or removed instances show up. Row icons
+come from each launcher's `AppIcon.icns` (converted with `sips`; `app.getFileIcon` only returns the generic
+`.app` icon on macOS). The window's close button hides it and the Dock icon (`app.dock.hide()`); the app really
+quits from the menu, with ⌘Q, or to install an update, and the unapplied-changes warning moved from the window's
+`close` to `before-quit` for that reason. If the tray cannot be created the app behaves as before (closing quits).
+"Open when I sign in" is a LaunchAgent that passes `--hidden` (`src/main/core/login-item.js`), off by default.
+The icon is drawn by `scripts/make-tray-icons.js`. `npm run test:menubar-ui` checks the window and Dock behavior in real Electron.
+
 Same behavior and file layout as the Python version, so existing instances keep working.
 
 - **macOS:** each instance is a tiny `~/Applications/Claude <Name>.app` that runs

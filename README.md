@@ -43,6 +43,12 @@ MuClaude gives every account its own isolated profile and its own launcher, so t
 
 Installed builds (the macOS app and the Windows installer) update themselves: MuClaude checks GitHub Releases at launch and every few hours, downloads new versions in the background, and shows **Restart to update** in the sidebar. If you don't restart, the update installs the next time you quit. Check manually under **Settings**. The Windows portable `.exe` cannot update itself.
 
+### Menu bar (macOS)
+
+MuClaude lives in the macOS menu bar: click its icon to open any of your Claude accounts in one click, each row with that launcher's own icon. The menu also has **Open MuClaude**, **Restart to Update** (once an update is downloaded) and **Quit MuClaude**.
+
+Closing the MuClaude window only hides it, and takes MuClaude out of the Dock until you open it again. Quit from the menu bar icon or with ⌘Q; if you have unapplied changes, MuClaude asks first. To have MuClaude start hidden in the menu bar when you sign in to your Mac, turn on **Open when I sign in** in **Settings** (off by default).
+
 ### Windows
 
 Download the installer or the portable `.exe` from the [latest release](https://github.com/Aplex2723/muClaude/releases/latest).

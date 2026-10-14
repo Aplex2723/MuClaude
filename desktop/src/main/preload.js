@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('mc', {
     ipcRenderer.on('app-update:state', listener);
     return () => ipcRenderer.removeListener('app-update:state', listener);
   },
+  setLoginItem: (on) => ipcRenderer.invoke('login-item:set', on),
   reveal: (dir) => ipcRenderer.invoke('folder:reveal', dir),
   onLog: (fn) => {
     const listener = (_e, line) => fn(String(line));

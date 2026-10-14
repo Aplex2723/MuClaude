@@ -554,6 +554,14 @@
       const cb = h('input', { type: 'checkbox', checked: state.updateCheck, onchange: (e) => { state.updateCheck = e.target.checked; } });
       body.append(sec('Updates', h('div', { class: 'row' }, h('div', { class: 'row-text' }, h('b', { text: 'Remind me after Claude updates' }), h('span', { text: 'Asks at sign-in whether to rebuild your instances. Saved with your next Apply.' })), h('label', { class: 'switch' }, cb, h('i')))));
     }
+    if (state.info.loginItem !== null && state.info.loginItem !== undefined) {
+      const cb = h('input', { type: 'checkbox', checked: state.info.loginItem, onchange: async (e) => {
+        try { state.info.loginItem = await window.mc.setLoginItem(e.target.checked); } catch (error) { toast(error.message); }
+        e.target.checked = state.info.loginItem;
+      } });
+      body.append(sec('Menu bar', h('div', { class: 'row' }, h('div', { class: 'row-text' }, h('b', { text: 'Open when I sign in' }),
+        h('span', { text: 'Starts MuClaude hidden in the menu bar, ready to open any account. Off by default.' })), h('label', { class: 'switch' }, cb, h('i')))));
+    }
     body.append(
       sec('Repair', h('p', { text: 'Rebuild every launcher and icon. Your data is never touched.' }),
         h('button', { class: 'btn btn-ghost btn-sm', type: 'button', disabled: !state.list.some((i) => i.orig) || !c || allProblems().length > 0, onclick: () => { $('settingsDlg').close(); apply({ all: true }); } }, 'Rebuild all launchers')),

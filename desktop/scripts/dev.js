@@ -16,14 +16,6 @@ const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 function main({ command, args = [], home = os.homedir(), cwd = ROOT, log = console.log } = {}) {
   const binDir = defaultBinDir(home);
   let installed = false;
-  if (process.platform === 'darwin') {
-    try {
-      for (const stale of pruneStaleCli({ binDir })) log(`Removed stale command link ${stale}`);
-      installCli({ target: TARGET, binDir, name: NAME });
-      installed = true;
-      log(`${NAME} -> ${TARGET} (removed when this server stops)`);
-    } catch (error) { log(`Skipped ${NAME}: ${error.message}`); }
-  }
   // Synchronous and idempotent: it also runs from the process 'exit' event. Only the exact
   // link created here is removed, so another worktree's server keeps its own.
   const cleanup = () => {
@@ -31,7 +23,6 @@ function main({ command, args = [], home = os.homedir(), cwd = ROOT, log = conso
     installed = false;
     try { removeCli({ binDir, name: NAME, target: TARGET }); } catch (_) { /* best effort */ }
   };
-  process.on('exit', cleanup);
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd, stdio: 'inherit' });
@@ -49,6 +40,17 @@ function main({ command, args = [], home = os.homedir(), cwd = ROOT, log = conso
     };
     child.once('error', (error) => { finish(); reject(error); });
     child.once('exit', (code, signal) => { finish(); resolve(code ?? 128 + (os.constants.signals[signal] || 1)); });
+
+    // Only once the signal handlers are in place: a Ctrl+C any time the link exists removes it.
+    process.on('exit', cleanup);
+    if (process.platform === 'darwin') {
+      try {
+        for (const stale of pruneStaleCli({ binDir })) log(`Removed stale command link ${stale}`);
+        installCli({ target: TARGET, binDir, name: NAME });
+        installed = true;
+        log(`${NAME} -> ${TARGET} (removed when this server stops)`);
+      } catch (error) { log(`Skipped ${NAME}: ${error.message}`); }
+    }
   });
 }
 
