@@ -8,6 +8,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { createStore, cleanEnv } = require('./profiles');
 const { removeCli, defaultBinDir } = require('./install');
+const { removeFromPath } = require('./path');
 
 const DATA_SUFFIX = path.join('Library', 'Application Support', 'MuClaude', 'code');
 
@@ -48,14 +49,16 @@ async function uninstallCode({ home = os.homedir(), binDir = defaultBinDir(home)
     }
   }
   const command = removeCli({ home, binDir });
-  return { command, profiles, dataRemoved, dataDir: base, warnings };
+  const pathFiles = removeFromPath({ home });
+  return { command, pathFiles, profiles, dataRemoved, dataDir: base, warnings };
 }
 
-function formatReport({ command, profiles, dataRemoved, dataDir, warnings }) {
+function formatReport({ command, pathFiles = [], profiles, dataRemoved, dataDir, warnings }) {
   const lines = [];
   if (command.status === 'removed') lines.push(`Removed the terminal command ${command.command}.`);
   else if (command.status === 'absent') lines.push(`No terminal command found at ${command.command}.`);
   else lines.push(`Left ${command.command} untouched: it is not a MuClaude link.`);
+  if (pathFiles.length) lines.push(`Removed MuClaude's PATH lines from ${pathFiles.join(', ')}.`);
   if (dataRemoved) lines.push(`Deleted Claude Code profile data${profiles.length ? ` (${profiles.join(', ')})` : ''}.`);
   else if (profiles.length) lines.push(`Kept profiles ${profiles.join(', ')} in ${dataDir}.`);
   return [...lines, ...warnings];

@@ -11,6 +11,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'muclaude-code-'));
 const home = path.join(tmp, 'home');
 fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
 const Code = require('../src/code/profiles');
+const External = require('../src/code/external');
 const store = Code.createStore(home);
 const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -120,6 +121,33 @@ test('successful sync does not replay old preferences after a shared reversion o
   assert.equal(read(file).language, undefined);
 });
 
+test('discovers the default environment, claude-* aliases and unaliased ~/.claude-* folders without touching them', () => {
+  const h = path.join(tmp, 'discover-home');
+  for (const dir of ['.claude', '.claude-p', '.claude-w', '.claude-extra', '.claude-empty']) fs.mkdirSync(path.join(h, dir), { recursive: true });
+  write(path.join(h, '.claude.json'), { oauthAccount: { emailAddress: 'main@example.test', organizationName: 'Main' } });
+  write(path.join(h, '.claude-p/.claude.json'), { oauthAccount: { emailAddress: 'p@example.test' } });
+  fs.mkdirSync(path.join(h, '.claude-extra/projects'));
+  const rc = [
+    "alias claude-p='CLAUDE_CONFIG_DIR=\"$HOME/.claude-p\" claude'",
+    'alias claude-w="CLAUDE_CONFIG_DIR=~/.claude-w claude --verbose"',
+    "alias other='CLAUDE_CONFIG_DIR=$SOMEWHERE/x claude'",
+    "alias gs='git status'",
+  ].join('\n');
+  fs.writeFileSync(path.join(h, '.zshrc'), rc);
+  const before = fs.readFileSync(path.join(h, '.zshrc'), 'utf8');
+  const envs = External.discover(h);
+  assert.deepEqual(envs.map((e) => [e.label, e.kind, path.relative(h, e.dir), e.email]), [
+    ['claude', 'default', '.claude', 'main@example.test'],
+    ['claude-p', 'alias', '.claude-p', 'p@example.test'],
+    ['claude-w', 'alias', '.claude-w', null],
+    ['.claude-extra', 'folder', '.claude-extra', null],
+  ]);
+  assert.equal(envs[1].command, `CLAUDE_CONFIG_DIR='${path.join(h, '.claude-p')}' claude`);
+  assert.equal(envs[1].display, '~/.claude-p');
+  assert.equal(fs.readFileSync(path.join(h, '.zshrc'), 'utf8'), before);
+  assert.deepEqual(External.discover(h, { exclude: [path.join(h, '.claude-w')] }).map((e) => e.label), ['claude', 'claude-p', '.claude-extra']);
+});
+
 test('CLI installation is idempotent and preserves an existing command on conflict', () => {
   if (process.platform !== 'darwin') return;
   const { installCli } = require('../src/code/install');
@@ -225,6 +253,52 @@ test('CLI installation replaces its own stale links but never a foreign command'
   assert.equal(fs.readlinkSync(command), '/usr/bin/true');
   assert.equal(installCli({ target: cliTarget, binDir, name: 'muclaude-dev' }).command, path.join(binDir, 'muclaude-dev'));
   assert.throws(() => installCli({ target: cliTarget, binDir, name: '../escape' }), /Invalid command name/);
+});
+
+test('addToPath writes one marked block per shell, is idempotent, and removeFromPath restores the file', () => {
+  const { addToPath, removeFromPath } = require('../src/code/path');
+  const h = path.join(tmp, 'path-home'); const binDir = path.join(h, '.local', 'bin');
+  fs.mkdirSync(h, { recursive: true });
+  const rc = path.join(h, '.zshrc'); const mine = '# my config\nalias ll="ls -l"\n';
+  fs.writeFileSync(rc, mine, { mode: 0o600 });
+  const first = addToPath({ home: h, binDir, shell: 'zsh' });
+  assert.deepEqual({ file: first.file, changed: first.changed }, { file: rc, changed: true });
+  const text = fs.readFileSync(rc, 'utf8');
+  assert.ok(text.startsWith(mine));
+  assert.match(text, /# >>> MuClaude >>>\n[^\n]*\n[^\n]*\$HOME\/\.local\/bin[^\n]*\n# <<< MuClaude <<<\n$/);
+  assert.equal(fs.statSync(rc).mode & 0o777, 0o600);
+  assert.equal(addToPath({ home: h, binDir, shell: 'zsh' }).changed, false);
+  assert.equal(fs.readFileSync(rc, 'utf8'), text);
+  // The line works in a real shell: the directory ends up first, and only once.
+  const probe = execFileSync('/bin/zsh', ['-c', `HOME=${JSON.stringify(h)}; PATH=/usr/bin; . ${JSON.stringify(rc)}; . ${JSON.stringify(rc)}; print -r -- $PATH`], { encoding: 'utf8' }).trim();
+  assert.equal(probe, `${binDir}:/usr/bin`);
+  assert.deepEqual(removeFromPath({ home: h }), [rc]);
+  assert.equal(fs.readFileSync(rc, 'utf8'), mine);
+  assert.deepEqual(removeFromPath({ home: h }), []);
+});
+
+test('addToPath picks the right startup file for bash and fish and edits through symlinks', () => {
+  const { addToPath, removeFromPath } = require('../src/code/path');
+  const h = path.join(tmp, 'path-shells'); fs.mkdirSync(h, { recursive: true });
+  const binDir = path.join(h, '.local', 'bin');
+  assert.equal(addToPath({ home: h, binDir, shell: 'bash' }).file, path.join(h, '.bash_profile'));
+  fs.rmSync(path.join(h, '.bash_profile'));
+  fs.writeFileSync(path.join(h, '.profile'), 'export A=1\n');
+  assert.equal(addToPath({ home: h, binDir, shell: 'bash' }).file, path.join(h, '.profile'));
+  assert.match(fs.readFileSync(path.join(h, '.profile'), 'utf8'), /^export A=1\n\n# >>> MuClaude/);
+  const fish = addToPath({ home: h, binDir, shell: 'fish' });
+  assert.equal(fish.file, path.join(h, '.config/fish/conf.d/muclaude.fish'));
+  assert.match(fs.readFileSync(fish.file, 'utf8'), /fish_add_path --move "\$HOME\/\.local\/bin"/);
+  const dotfiles = path.join(h, 'dotfiles'); fs.mkdirSync(dotfiles);
+  fs.writeFileSync(path.join(dotfiles, 'zshrc'), '# repo\n'); fs.symlinkSync(path.join(dotfiles, 'zshrc'), path.join(h, '.zshrc'));
+  addToPath({ home: h, binDir, shell: 'zsh' });
+  assert.ok(fs.lstatSync(path.join(h, '.zshrc')).isSymbolicLink(), 'the link survives');
+  assert.match(fs.readFileSync(path.join(dotfiles, 'zshrc'), 'utf8'), /MuClaude/);
+  removeFromPath({ home: h });
+  assert.equal(fs.readFileSync(path.join(h, '.profile'), 'utf8'), 'export A=1\n');
+  assert.equal(fs.existsSync(fish.file), false, 'a fish file that only held our block is deleted');
+  assert.equal(fs.readFileSync(path.join(dotfiles, 'zshrc'), 'utf8'), '# repo\n');
+  assert.throws(() => addToPath({ home: h, binDir: 'relative/bin', shell: 'zsh' }), /absolute/);
 });
 
 test('removeCli and pruneStaleCli only remove MuClaude links', () => {

@@ -58,14 +58,16 @@ Requires [Claude Desktop](https://claude.ai/download) to be installed.
 
 ## Claude Code profiles (macOS)
 
-Install [Claude Code](https://code.claude.com/docs/en/setup) and Node.js 18+, then install MuClaude's terminal command from this checkout:
+Install [Claude Code](https://code.claude.com/docs/en/setup) and Node.js 18+, then open **Claude Code** in MuClaude and click **Add muclaude to PATH**. It links the `muclaude` command into `~/.local/bin` and adds that folder to your shell's startup file (`~/.zshrc` for zsh, `~/.bash_profile` for bash, `conf.d/muclaude.fish` for fish) inside a marked `# >>> MuClaude >>>` block. Open a new terminal afterwards.
+
+From a checkout, the same thing from the command line:
 
 ```bash
 cd desktop
-npm run install:cli
+npm run install:cli -- --add-to-path
 ```
 
-Put `~/.local/bin` first on your terminal's `PATH` if it is not already there:
+Without `--add-to-path` only the link is created; put `~/.local/bin` first on your `PATH` yourself:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"  # add this to ~/.zshrc for new terminals
@@ -127,7 +129,7 @@ muclaude uninstall --keep-data     # only removes the command
 muclaude uninstall --delete-data --yes
 ```
 
-The command is removed only if it is a MuClaude link. With data deletion, each profile is signed out through `claude auth logout` (clearing its Keychain entry) and `~/Library/Application Support/MuClaude/code` is deleted, including accounts, history and automatic memory. `~/.claude` (skills, settings), `~/.claude.json`, Desktop instances and Google sign-in data are never touched. Close running `muclaude code` sessions first, then move MuClaude.app to the Trash. If Claude Code is not on PATH, profiles are still deleted but a sign-in may remain in Keychain Access.
+The command is removed only if it is a MuClaude link, and the `# >>> MuClaude >>>` PATH block is removed from your shell startup files. With data deletion, each profile is signed out through `claude auth logout` (clearing its Keychain entry) and `~/Library/Application Support/MuClaude/code` is deleted, including accounts, history and automatic memory. `~/.claude` (skills, settings), `~/.claude.json`, Desktop instances and Google sign-in data are never touched. Close running `muclaude code` sessions first, then move MuClaude.app to the Trash. If Claude Code is not on PATH, profiles are still deleted but a sign-in may remain in Keychain Access.
 
 When working from a checkout, `npm run dev` provides a `muclaude-dev` command for as long as the dev server runs and removes it when the server stops, so no link to a short-lived worktree is left behind. It never touches `muclaude`.
 
