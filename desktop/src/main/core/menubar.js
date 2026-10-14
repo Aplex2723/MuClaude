@@ -48,7 +48,11 @@ async function launcherIcon({ nativeImage, convert = sips }, appPath) {
 }
 
 const mtime = (p) => { try { return fs.statSync(p).mtimeMs; } catch (_) { return 0; } };
-const withTimeout = (promise, ms) => Promise.race([promise, new Promise((resolve) => { setTimeout(resolve, ms, null).unref(); })]);
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(resolve, ms, null); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * `listInstances()` gives `[{ name, appPath }]` and `loadIcon(appPath)` resolves to the launcher's icon (or null).
