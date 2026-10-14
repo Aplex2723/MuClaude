@@ -28,7 +28,7 @@
   };
 
   const state = {
-    info: null, list: [], sel: null, nextId: 1, problems: [], profileData: new Map(), mode: 'choose', busy: false, updateCheck: true, googleLogin: null,
+    update: null, info: null, list: [], sel: null, nextId: 1, problems: [], profileData: new Map(), mode: 'choose', busy: false, updateCheck: true, googleLogin: null,
   };
   let ui = {};
   let validateSeq = 0; let validateTimer = null; let toastTimer = null;
@@ -117,6 +117,39 @@
     chip.classList.toggle('warn', !c);
     chip.append(h('span', { text: c ? `Claude ${c.version || 'Desktop'} found` : 'Claude Desktop not found' }));
     chip.title = c ? c.path : 'Install Claude Desktop first';
+  }
+
+  /** Sidebar card: only while an update downloads or waits for a restart. Checks and errors stay quiet. */
+  function renderUpdateCard() {
+    const card = $('updateCard'); const u = state.update;
+    card.replaceChildren();
+    card.hidden = !u || !['downloading', 'ready'].includes(u.status);
+    if (card.hidden) return;
+    if (u.status === 'downloading') {
+      const fill = h('i'); fill.style.width = `${u.percent}%`; // CSSOM, since the CSP forbids inline style attributes
+      card.append(h('div', {}, h('b', { text: `Downloading ${u.version || 'update'}` }), h('span', { text: `${u.percent}%` })), h('div', { class: 'update-bar' }, fill));
+      return;
+    }
+    card.append(h('div', {}, h('b', { text: `MuClaude ${u.version} is ready` }), h('span', { text: 'Restart to finish updating.' })),
+      h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: restartToUpdate }, 'Restart to update'));
+  }
+
+  async function restartToUpdate() {
+    const r = await window.mc.installAppUpdate().catch((e) => ({ ok: false, message: e.message }));
+    if (!r.ok && r.message) toast(r.message);
+  }
+
+  function updateStatusText(u) {
+    switch (u.status) {
+      case 'unsupported': return u.reason === 'portable' ? 'The portable build cannot update itself. Download the installer to get automatic updates.'
+        : u.reason === 'dev' ? 'Updates are off when running from source.' : 'Updates are off for this run.';
+      case 'checking': return 'Checking for updates…';
+      case 'downloading': return `Downloading ${u.version || 'update'} (${u.percent}%)…`;
+      case 'ready': return `${u.version} is ready. Restart to finish updating.`;
+      case 'current': return 'You are on the latest version.';
+      case 'error': return `Could not check for updates (${u.error || 'unknown error'}).`;
+      default: return 'MuClaude updates itself in the background.';
+    }
   }
 
   function subText(i) {
@@ -507,8 +540,16 @@
     body.append(
       sec('About', h('p', { text: `MuClaude ${state.info.appVersion}. ${c ? `Using Claude ${c.version || 'Desktop'} at ${c.path}.` : 'Claude Desktop was not found.'}` }),
         h('p', { text: isMac
-          ? 'Each instance is a small launcher app that opens Claude on its own data folder. Claude itself is never modified, and this app makes no network connections.'
+          ? 'Each instance is a small launcher app that opens Claude on its own data folder. Claude itself is never modified. The only network access is checking GitHub for MuClaude updates.'
           : 'Instances run from a modified copy of Claude Desktop, built for you and self-tested first. Your original install is never changed. Anthropic does not support modified copies, so updates to Claude may need a rebuild.' })));
+    const u = state.update;
+    if (u) {
+      const status = h('span', { text: updateStatusText(u) });
+      const action = u.status === 'ready' ? h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => { $('settingsDlg').close(); restartToUpdate(); } }, 'Restart to update')
+        : u.reason === 'portable' ? h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => window.mc.openReleases() }, 'Open downloads')
+        : h('button', { class: 'btn btn-ghost btn-sm', type: 'button', disabled: u.status === 'unsupported' || ['checking', 'downloading'].includes(u.status), onclick: () => window.mc.checkForAppUpdate() }, 'Check for updates');
+      body.append(sec('MuClaude updates', h('div', { class: 'row' }, h('div', { class: 'row-text' }, h('b', { text: `Version ${u.currentVersion}` }), status), action)));
+    }
     if (state.info.platform === 'win32') {
       const cb = h('input', { type: 'checkbox', checked: state.updateCheck, onchange: (e) => { state.updateCheck = e.target.checked; } });
       body.append(sec('Updates', h('div', { class: 'row' }, h('div', { class: 'row-text' }, h('b', { text: 'Remind me after Claude updates' }), h('span', { text: 'Asks at sign-in whether to rebuild your instances. Saved with your next Apply.' })), h('label', { class: 'switch' }, cb, h('i')))));
@@ -521,7 +562,7 @@
           $('settingsDlg').close(); removeNames = state.list.filter((i) => i.orig).map((i) => i.orig.name); removeUninstall = true;
           openRemoveDialog('Remove everything?', `This removes ${removeNames.length} instance${removeNames.length > 1 ? 's' : ''}${isMac ? '' : ', the patched Claude copy'} and all launchers.`);
         } }, 'Remove all instances…')));
-    $('settingsDlg').showModal();
+    if (!$('settingsDlg').open) $('settingsDlg').showModal();
   }
 
   // ---------- boot ----------
@@ -531,7 +572,8 @@
     state.profileData.clear();
     state.list = state.info.instances.map((s) => makeInstance(s, false));
     state.sel = state.list.find((i) => i.name === keepName)?.id ?? state.list[0]?.id ?? null;
-    renderChip(); renderMain(); renderSidebar(); scheduleValidate();
+    state.update = await window.mc.appUpdateState().catch(() => null);
+    renderChip(); renderUpdateCard(); renderMain(); renderSidebar(); scheduleValidate();
     for (const i of state.list) loadProfileData(effectiveProfile(i)).then(renderSidebar);
   }
 
@@ -540,6 +582,10 @@
     $('applyBtn').addEventListener('click', () => apply());
     $('discardBtn').addEventListener('click', discard);
     $('settingsBtn').addEventListener('click', openSettings);
+    window.mc.onAppUpdate((u) => {
+      state.update = u; renderUpdateCard();
+      if ($('settingsDlg').open) openSettings(); // refresh the status line in place
+    });
     $('codeBtn').hidden = !isMac;
     $('codeBtn').addEventListener('click', openCodeProfiles);
     $('codeClose').addEventListener('click', () => $('codeDlg').close());

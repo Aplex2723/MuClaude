@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld('mc', {
   beginGoogleLogin: (name) => ipcRenderer.invoke('google-login:begin', name),
   googleLoginStatus: () => ipcRenderer.invoke('google-login:status'),
   cancelGoogleLogin: () => ipcRenderer.invoke('google-login:cancel'),
+  appUpdateState: () => ipcRenderer.invoke('app-update:state'),
+  checkForAppUpdate: () => ipcRenderer.invoke('app-update:check'),
+  installAppUpdate: () => ipcRenderer.invoke('app-update:install'),
+  openReleases: () => ipcRenderer.invoke('app-update:releases'),
+  onAppUpdate: (fn) => {
+    const listener = (_e, state) => fn(state);
+    ipcRenderer.on('app-update:state', listener);
+    return () => ipcRenderer.removeListener('app-update:state', listener);
+  },
   reveal: (dir) => ipcRenderer.invoke('folder:reveal', dir),
   onLog: (fn) => {
     const listener = (_e, line) => fn(String(line));
