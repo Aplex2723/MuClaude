@@ -66,7 +66,7 @@ async function boot({ platform = 'darwin', manifest = [], trayFails = false, arg
   };
   const mocks = { electron, './core/platform': P, './core/icons': {}, './core/startup': {}, './core/update-check': {},
     './core/remove': { knownInstances: () => known, removeInstances: (...a) => operation(...a) },
-    './core/setup': { run: (...a) => operation(...a) }, '../code/profiles': {}, '../code/install': {}, '../code/uninstall': {},
+    './core/setup': { run: (...a) => operation(...a) }, '../code/profiles': {}, '../code/install': {}, '../code/uninstall': {}, '../code/external': { discover: () => [] },
     './core/google-login': { createGoogleLogin: () => ({ status: () => ({ active }), cancel: async () => { cancelled++; if (cancelError) throw cancelError; active = false; } }) },
     './core/launcher': {},
   };
