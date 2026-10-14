@@ -51,6 +51,10 @@ app.whenReady().then(async () => {
     const command = path.join(process.env.CMC_HOME, '.local/bin/muclaude');
     for (let i = 0; i < 30 && !fs.existsSync(command); i++) await sleep(100);
     assert.ok(fs.lstatSync(command).isSymbolicLink());
+    const startupFiles = ['.zshrc', '.bash_profile', '.bash_login', '.profile', '.config/fish/conf.d/muclaude.fish'].map((f) => path.join(process.env.CMC_HOME, f));
+    const pathBlock = () => startupFiles.filter((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('>>> MuClaude >>>'));
+    for (let i = 0; i < 30 && !pathBlock().length; i++) await sleep(100);
+    assert.equal(pathBlock().length, 1, 'the button also puts the command on PATH');
     const screenshot = path.join(os.tmpdir(), 'muclaude-code-profiles.png');
     fs.writeFileSync(screenshot, (await win.webContents.capturePage()).toPNG());
 
@@ -71,6 +75,7 @@ app.whenReady().then(async () => {
     assert.deepEqual(fs.readdirSync(root), ['x', 'y'], 'command only keeps the profiles');
     assert.equal(fs.existsSync(log), false, 'command only signs nobody out');
     assert.match(await message(), /Removed the terminal command/);
+    assert.equal(pathBlock().length, 0, 'uninstall removes the PATH lines');
     await js('document.querySelector("#codeInstall").click()');
     for (let i = 0; i < 30 && !fs.existsSync(command); i++) await sleep(100);
     await choose(2);

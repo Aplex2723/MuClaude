@@ -554,7 +554,7 @@
     $('codeInstall').addEventListener('click', async () => {
       try {
         const result = await window.mc.installCodeCli();
-        $('codeMessage').textContent = `Installed ${result.command}. Put ~/.local/bin first on PATH. You can close MuClaude and use the command.`;
+        $('codeMessage').textContent = `Installed ${result.command} and added it to your PATH in ${result.path.file.replace(/^\/Users\/[^/]+/, '~')}. Open a new Terminal window and run muclaude code x.`;
       } catch (error) { $('codeMessage').textContent = error.message; }
     });
     $('codeUninstall').addEventListener('click', async () => {
