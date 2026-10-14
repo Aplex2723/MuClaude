@@ -11,6 +11,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'muclaude-code-'));
 const home = path.join(tmp, 'home');
 fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
 const Code = require('../src/code/profiles');
+const External = require('../src/code/external');
 const store = Code.createStore(home);
 const write = (file, value) => fs.writeFileSync(file, JSON.stringify(value));
 const read = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -118,6 +119,33 @@ test('successful sync does not replay old preferences after a shared reversion o
   assert.equal(read(file).model, 'sonnet');
   assert.equal(read(sharedFile).language, undefined);
   assert.equal(read(file).language, undefined);
+});
+
+test('discovers the default environment, claude-* aliases and unaliased ~/.claude-* folders without touching them', () => {
+  const h = path.join(tmp, 'discover-home');
+  for (const dir of ['.claude', '.claude-p', '.claude-w', '.claude-extra', '.claude-empty']) fs.mkdirSync(path.join(h, dir), { recursive: true });
+  write(path.join(h, '.claude.json'), { oauthAccount: { emailAddress: 'main@example.test', organizationName: 'Main' } });
+  write(path.join(h, '.claude-p/.claude.json'), { oauthAccount: { emailAddress: 'p@example.test' } });
+  fs.mkdirSync(path.join(h, '.claude-extra/projects'));
+  const rc = [
+    "alias claude-p='CLAUDE_CONFIG_DIR=\"$HOME/.claude-p\" claude'",
+    'alias claude-w="CLAUDE_CONFIG_DIR=~/.claude-w claude --verbose"',
+    "alias other='CLAUDE_CONFIG_DIR=$SOMEWHERE/x claude'",
+    "alias gs='git status'",
+  ].join('\n');
+  fs.writeFileSync(path.join(h, '.zshrc'), rc);
+  const before = fs.readFileSync(path.join(h, '.zshrc'), 'utf8');
+  const envs = External.discover(h);
+  assert.deepEqual(envs.map((e) => [e.label, e.kind, path.relative(h, e.dir), e.email]), [
+    ['claude', 'default', '.claude', 'main@example.test'],
+    ['claude-p', 'alias', '.claude-p', 'p@example.test'],
+    ['claude-w', 'alias', '.claude-w', null],
+    ['.claude-extra', 'folder', '.claude-extra', null],
+  ]);
+  assert.equal(envs[1].command, `CLAUDE_CONFIG_DIR='${path.join(h, '.claude-p')}' claude`);
+  assert.equal(envs[1].display, '~/.claude-p');
+  assert.equal(fs.readFileSync(path.join(h, '.zshrc'), 'utf8'), before);
+  assert.deepEqual(External.discover(h, { exclude: [path.join(h, '.claude-w')] }).map((e) => e.label), ['claude', 'claude-p', '.claude-extra']);
 });
 
 test('CLI installation is idempotent and preserves an existing command on conflict', () => {

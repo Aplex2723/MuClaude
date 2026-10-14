@@ -10,6 +10,7 @@ const startup = require('./core/startup');
 const updateCheck = require('./core/update-check');
 const codeProfiles = require('../code/profiles');
 const { installCli } = require('../code/install');
+const externalEnvs = require('../code/external');
 const { uninstallCode, formatReport } = require('../code/uninstall');
 const { createGoogleLogin } = require('./core/google-login');
 const { macAppPath, macClaudeBundle } = require('./core/launcher');
@@ -115,6 +116,24 @@ function registerIpc() {
     if (store.list().includes(name)) throw new Error('That Code profile already exists.');
     return { name, dir: store.prepare(name).dir };
   });
+  // The window names an environment by directory; only directories discovered here are ever acted on.
+  const externalEnv = (dir) => {
+    const env = externalEnvs.discover(P.HOME).find((e) => e.dir === str(dir));
+    if (!env) throw new Error('That environment no longer exists. Reopen this window.');
+    return env;
+  };
+  handle('code:external-list', () => {
+    if (!isMac) throw new Error('Code profiles currently support macOS only.');
+    return externalEnvs.discover(P.HOME);
+  });
+  handle('code:external-open', async (_e, dir) => {
+    const env = externalEnv(dir);
+    const escaped = env.command.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    await new Promise((resolve, reject) => require('node:child_process').execFile('/usr/bin/osascript',
+      ['-e', 'tell application "Terminal"', '-e', 'activate', '-e', `do script "${escaped}"`, '-e', 'end tell'], (error) => (error ? reject(error) : resolve())));
+    return { ok: true };
+  });
+  handle('code:external-reveal', (_e, dir) => { shell.showItemInFolder(externalEnv(dir).dir); });
   handle('code:install-cli', () => installCli({ home: P.HOME, target: cliTarget() }));
   handle('code:uninstall', async () => {
     if (!isMac) throw new Error('Code profiles currently support macOS only.');

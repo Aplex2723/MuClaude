@@ -470,7 +470,24 @@
     $('applyTitle').textContent = title; $('applySub').textContent = sub;
   }
 
+  async function refreshExternalCode() {
+    const envs = await window.mc.listExternalCode();
+    const run = (fn) => async () => { try { await fn(); } catch (error) { $('codeMessage').textContent = error.message; } };
+    $('codeExternal').replaceChildren(h('h3', { text: 'Your Claude Code environments' }),
+      h('p', { text: 'Found in your shell aliases and home folder. MuClaude only reads them; nothing is changed.' }),
+      ...(envs.length ? envs.map((env) => h('div', { class: 'row' },
+        h('div', { class: 'row-text' },
+          h('b', { text: env.label }),
+          h('span', { class: 'hint', text: [env.email, env.org].filter(Boolean).join(' · ') || 'Not signed in' }),
+          h('br'), h('span', { class: 'hint', text: env.display })),
+        h('div', { class: 'row-actions' },
+          h('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Open in Terminal', onclick: run(() => window.mc.openExternalCode(env.dir)) }),
+          h('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Copy command', onclick: run(async () => { await navigator.clipboard.writeText(env.command); $('codeMessage').textContent = `Copied: ${env.command}`; }) }),
+          h('button', { class: 'btn btn-ghost btn-sm', type: 'button', text: 'Show', onclick: run(() => window.mc.revealExternalCode(env.dir)) }))))
+        : [h('p', { text: 'No existing environments found.' })]));
+  }
   async function refreshCodeProfiles() {
+    await refreshExternalCode();
     const info = await window.mc.listCodeProfiles();
     $('codeProfiles').replaceChildren(...(info.profiles.length
       ? info.profiles.map((name) => h('p', {}, h('code', { text: `muclaude code ${name}` })))

@@ -9,6 +9,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'muclaude-code-ui-'));
 process.env.CMC_HOME = path.join(tmp, 'home');
 process.env.CMC_CLAUDE_DIRS = path.join(tmp, 'no-desktop');
 fs.mkdirSync(process.env.CMC_HOME);
+// Pre-existing environments, as a user would have from aliases.
+fs.mkdirSync(path.join(process.env.CMC_HOME, '.claude-w'));
+fs.writeFileSync(path.join(process.env.CMC_HOME, '.claude-w/.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'w@example.test', organizationName: 'Wheel' } }));
+fs.writeFileSync(path.join(process.env.CMC_HOME, '.zshrc'), "alias claude-w='CLAUDE_CONFIG_DIR=\"$HOME/.claude-w\" claude'\n");
 app.setPath('userData', path.join(tmp, 'electron'));
 require('../src/main/main');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,6 +33,10 @@ app.whenReady().then(async () => {
       await sleep(100);
     }
     assert.equal(await js('document.querySelector("#codeDlg").open'), true);
+    for (let i = 0; i < 30 && !(await js('document.querySelector("#codeExternal").textContent.includes("claude-w")')); i++) await sleep(100);
+    const external = await js('document.querySelector("#codeExternal").textContent');
+    assert.match(external, /claude-w.*w@example\.test · Wheel.*~\/\.claude-w/);
+    assert.match(await js('[...document.querySelectorAll("#codeExternal button")].map((b) => b.textContent).join()'), /Open in Terminal,Copy command,Show/);
     for (const name of ['x', 'y']) {
       await js(`document.querySelector('#codeName').value = '${name}'; document.querySelector('#codeForm').requestSubmit()`);
       for (let i = 0; i < 30; i++) {
