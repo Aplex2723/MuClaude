@@ -11,9 +11,11 @@
     "predev": "npm run build:login-router",
     "prestart": "npm run build:login-router",
     "start": "electron .",
-    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js",
+    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js scripts/test-menubar.js",
     "build:login-router": "node scripts/build-login-router.js",
     "test:google-native": "node scripts/test-google-native.js",
+    "test:menubar-ui": "electron scripts/test-menubar-ui.js",
+    "icons:menubar": "electron scripts/make-menubar-icons.js",
     "test:google-ui": "electron scripts/test-google-ui.js",
     "install:cli": "node scripts/install-code-cli.js",
     "icons": "electron scripts/make-icons.js",
@@ -39,6 +41,7 @@
     },
     "mac": {
       "category": "public.app-category.utilities",
+      "extendInfo": { "LSUIElement": true },
       "icon": "build/icon.icns",
       "identity": "-",
       "extraResources": [

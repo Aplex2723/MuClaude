@@ -19,6 +19,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 app.whenReady().then(async () => {
   try {
+    // Applied instances start in the menu bar; explicitly open the manager.
+    app.emit('activate');
     let win;
     for (let i = 0; i < 80; i++) {
       win = BrowserWindow.getAllWindows()[0];

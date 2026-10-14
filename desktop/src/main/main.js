@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, session, Tray, Menu, nativeImage } = require('electron');
 const P = require('./core/platform');
 const icons = require('./core/icons');
 const setup = require('./core/setup');
@@ -18,6 +18,9 @@ const INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
 const cliTarget = () => (app.isPackaged ? path.join(process.resourcesPath, 'code-cli', 'cli.js') : path.join(__dirname, '..', 'code', 'cli.js'));
 const isMac = process.platform === 'darwin';
 let win = null;
+let tray = null;
+let quitting = false;
+let cancellingLoginForQuit = false;
 let dirtyCount = 0; // unapplied changes reported by the renderer
 let applying = false;
 const googleLogin = isMac ? createGoogleLogin({
@@ -46,20 +49,106 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => { win = null; });
   win.on('close', (e) => {
-    if (applying) {
+    if (quitting) return;
+    if (isMac && tray) {
       e.preventDefault();
-      dialog.showMessageBoxSync(win, { type: 'info', message: 'Still applying changes', detail: 'Please wait a moment until it finishes, then quit.', buttons: ['OK'] });
-    } else if (dirtyCount > 0) {
-      const r = dialog.showMessageBoxSync(win, {
-        type: 'warning', buttons: ['Keep editing', 'Discard and quit'], defaultId: 0, cancelId: 0,
-        message: `You have ${dirtyCount} unapplied change${dirtyCount > 1 ? 's' : ''}`, detail: 'Quitting now will discard them.',
-      });
-      if (r === 0) e.preventDefault();
+      win.hide();
+    } else {
+      e.preventDefault();
+      app.quit();
     }
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(INDEX);
+}
+
+/** All entry points restore the same window, preserving drafts and running work. */
+function showWindow() {
+  if (!win || win.isDestroyed()) createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function showMessage(options) {
+  return win && win.isVisible() ? dialog.showMessageBoxSync(win, options) : dialog.showMessageBoxSync(options);
+}
+
+function canQuit() {
+  if (applying) {
+    showMessage({ type: 'info', message: 'Still applying changes', detail: 'Please wait a moment until it finishes, then quit.', buttons: ['OK'] });
+    return false;
+  }
+  if (dirtyCount > 0) {
+    return showMessage({
+      type: 'warning', buttons: ['Keep editing', 'Discard and quit'], defaultId: 0, cancelId: 0,
+      message: `You have ${dirtyCount} unapplied change${dirtyCount > 1 ? 's' : ''}`, detail: 'Quitting now will discard them.',
+    }) === 1;
+  }
+  return true;
+}
+
+function launcherTarget(inst) {
+  return process.platform === 'win32'
+    ? inst.files.find((f) => f.endsWith('.lnk') && f.startsWith(P.rootInstallDir()))
+    : inst.files.find((f) => f.endsWith('.app'));
+}
+
+async function openInstance(name) {
+  name = str(name, 200);
+  if (applying || quitting || cancellingLoginForQuit) return { ok: false, message: 'Finish the current operation first.' };
+  // Resolve again at selection time: a popup can outlive a rename/removal.
+  const inst = remove.knownInstances().find((i) => i.name.toLowerCase() === name.toLowerCase());
+  if (!inst) return { ok: false, message: 'Unknown instance.' };
+  const target = launcherTarget(inst);
+  if (!target) return { ok: false, message: 'Apply your changes first; this instance has no launcher yet.' };
+  const err = await shell.openPath(target);
+  return { ok: !err, message: err };
+}
+
+function showTrayMenu() {
+  const instances = remove.knownInstances(); // manifest order, existing owned launchers only
+  const items = instances.length ? instances.map((inst) => ({
+    label: `Claude ${inst.name}`,
+    enabled: !applying && !quitting && !cancellingLoginForQuit && !!launcherTarget(inst),
+    click: async () => {
+      try {
+        const result = await openInstance(inst.name);
+        if (!result.ok) showMessage({ type: 'error', title: 'MuClaude', message: result.message, buttons: ['OK'] });
+      } catch (error) {
+        showMessage({ type: 'error', title: 'MuClaude', message: error.message, buttons: ['OK'] });
+      }
+    },
+  })) : [{ label: 'No instances yet', enabled: false }];
+  tray.popUpContextMenu(Menu.buildFromTemplate([
+    ...items, { type: 'separator' },
+    { label: 'Manage instances…', click: showWindow },
+    { label: 'Quit MuClaude', click: () => app.quit() },
+  ]));
+}
+
+function createTray() {
+  if (tray) return true;
+  try {
+    const image = nativeImage.createFromPath(path.join(__dirname, 'assets', 'menubarTemplate.png'));
+    if (image.isEmpty()) throw new Error('Menu bar image could not be loaded.');
+    image.setTemplateImage(true);
+    tray = new Tray(image);
+    tray.setToolTip('MuClaude');
+    tray.setIgnoreDoubleClickEvents(true);
+    tray.on('click', showTrayMenu);
+    tray.on('right-click', showTrayMenu);
+    app.setActivationPolicy('accessory');
+    return true;
+  } catch (error) {
+    console.error('Menu bar unavailable:', error);
+    if (tray) tray.destroy();
+    tray = null;
+    app.setActivationPolicy('regular');
+    app.dock.show();
+    return false;
+  }
 }
 
 /** Only our own window may call the IPC handlers. */
@@ -151,6 +240,7 @@ function registerIpc() {
   });
 
   handle('setup:apply', async (event, cfg) => {
+    if (applying || quitting || cancellingLoginForQuit) return { ok: false, message: 'Finish the current operation first.' };
     if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before applying instance changes.' };
     if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.instances) || cfg.instances.length > 50) throw new Error('bad argument');
     const clean = {
@@ -168,6 +258,7 @@ function registerIpc() {
   });
 
   handle('instances:remove', async (event, opts) => {
+    if (applying || quitting || cancellingLoginForQuit) return { ok: false, message: 'Finish the current operation first.' };
     if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before removing an instance.' };
     if (!opts || !Array.isArray(opts.names) || opts.names.length > 100) throw new Error('bad argument');
     const log = (line) => { if (!event.sender.isDestroyed()) event.sender.send('setup:log', line); };
@@ -175,20 +266,11 @@ function registerIpc() {
     try { return await remove.removeInstances(opts.names.map((n) => str(n, 200)), { deleteData: opts.deleteData === true, uninstall: opts.uninstall === true, log }); } finally { applying = false; }
   });
 
-  handle('instance:open', async (_e, name) => {
-    const inst = remove.knownInstances().find((i) => i.name.toLowerCase() === str(name, 200).toLowerCase());
-    if (!inst) return { ok: false, message: 'Unknown instance.' };
-    const target = process.platform === 'win32'
-      ? inst.files.find((f) => f.endsWith('.lnk') && f.startsWith(P.rootInstallDir()))
-      : inst.files.find((f) => f.endsWith('.app'));
-    if (!target) return { ok: false, message: 'Apply your changes first; this instance has no launcher yet.' };
-    const err = await shell.openPath(target);
-    return { ok: !err, message: err };
-  });
+  handle('instance:open', (_e, name) => openInstance(name));
 
   handle('google-login:begin', async (_e, name) => {
     if (!googleLogin) return { ok: false, message: 'Google sign-in routing currently supports macOS only.' };
-    if (applying || googleLogin.status().active) return { ok: false, message: 'Finish or cancel the current operation first.' };
+    if (applying || quitting || cancellingLoginForQuit || googleLogin.status().active) return { ok: false, message: 'Finish or cancel the current operation first.' };
     const inst = P.loadManifest().find((i) => i.name.toLowerCase() === str(name, 200).toLowerCase());
     if (!inst || P.validateNames([inst.name]).length) return { ok: false, message: 'Apply this instance before signing in.' };
     return googleLogin.begin({ name: inst.name, profileDir: inst.profile_dir || P.profileDir(P.safeName(inst.name)) }, async (cancelled) => {
@@ -241,15 +323,25 @@ async function selfCheck() {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  let cancellingLoginForQuit = false;
   app.on('before-quit', (event) => {
-    if (!googleLogin?.status().active) return;
-    event.preventDefault();
-    if (cancellingLoginForQuit) return;
-    cancellingLoginForQuit = true;
-    googleLogin.cancel().then(() => { cancellingLoginForQuit = false; app.quit(); });
+    if (quitting) return;
+    if (cancellingLoginForQuit) { event.preventDefault(); return; }
+    if (!canQuit()) { event.preventDefault(); return; }
+    if (googleLogin?.status().active) {
+      event.preventDefault();
+      cancellingLoginForQuit = true;
+      googleLogin.cancel().then(() => {
+        cancellingLoginForQuit = false;
+        quitting = true;
+        app.quit();
+      }).catch((error) => {
+        cancellingLoginForQuit = false;
+        showMessage({ type: 'error', message: error.message, buttons: ['OK'] });
+      });
+    } else quitting = true;
   });
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  app.on('will-quit', () => { if (tray) { tray.destroy(); tray = null; } });
+  app.on('second-instance', showWindow);
 
   app.whenReady().then(async () => {
     // deny every permission request and block remote content outright
@@ -260,9 +352,10 @@ else {
       const open = await runUpdateCheck();
       if (!open) { app.quit(); return; }
     }
-    createWindow();
+    const menuBarReady = isMac && createTray();
+    if (!menuBarReady || !P.loadManifest().length || process.argv.includes('--self-check')) showWindow();
     if (process.argv.includes('--self-check')) selfCheck();
-    app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+    app.on('activate', showWindow);
   });
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => { if (!isMac || !tray) app.quit(); });
 }

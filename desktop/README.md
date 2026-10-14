@@ -16,12 +16,14 @@ npm install
 npm run dev             # build native sign-in helper + run from source; provides `muclaude-dev` until you stop it
 npm test                # Desktop + Code tests in temporary homes
 npm run test:google-native # callback delivery between real disposable macOS processes
+npm run test:menubar-ui  # native menu bar, Dock, drafts, launch guards, second-process reopening
 npm run test:google-ui   # per-instance sign-in UI + IPC checks in a temporary home
 npm run install:cli     # standalone muclaude command in ~/.local/bin (macOS)
 npm run selfcheck       # launches the real window and confirms the UI rendered
 npm run dist:mac        # -> dist/mac-arm64/MuClaude.app and dist/MuClaude-<ver>-arm64.dmg
 npm run install:mac     # build + copy into /Applications (add -- --no-build to reuse the last build)
 npm run dist:win        # run on Windows -> portable exe + installer
+npm run icons:menubar   # regenerate monochrome menu bar PNGs from src/main/assets/menubar.svg
 npm run icons           # regenerate build/icon.* from ../assets/app-icon.png
 ```
 
@@ -29,6 +31,20 @@ npm run icons           # regenerate build/icon.* from ../assets/app-icon.png
 *MuClaude* to *Applications*. After that, launch it from Spotlight or Launchpad like any other
 app; no terminal or npm needed. It is ad-hoc signed, not notarized, so the first time right-click it
 and choose **Open**. This is an Apple Silicon build (an Intel build is untested).
+
+## macOS menu bar
+
+MuClaude runs in the menu bar and stays out of the Dock. With applied Desktop
+instances it starts without a window; on first use it opens the manager. Click the
+monochrome icon to open an applied **Claude <Name>** launcher, choose **Manage
+instances…** to edit them, or **Quit MuClaude** to exit. Launchers that have been
+removed are disabled. Claude Code profiles are managed separately in the window.
+
+The red close button hides the manager and keeps drafts and ongoing operations.
+Opening MuClaude again restores the same window. Quitting asks about unapplied
+changes, waits for apply/removal to finish, and cancels any Google sign-in routing.
+If the menu bar icon cannot be created, MuClaude opens the manager and restores
+its Dock entry. Windows keeps its existing window behavior.
 
 ## How it works
 
