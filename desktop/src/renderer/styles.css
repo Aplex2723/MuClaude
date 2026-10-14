@@ -105,6 +105,11 @@ body.mac .drag-strip { height: 40px; }
 .add-btn .plus { font-size: 18px; line-height: 1; color: var(--coral); width: 20px; text-align: center; }
 
 .side-foot { margin-top: auto; padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.update-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--coral-wash); border: 1px solid color-mix(in srgb, var(--coral) 30%, transparent); font-size: 12.5px; }
+.update-card b { font-weight: 600; display: block; }
+.update-card span { color: var(--muted); }
+.update-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--coral) 22%, transparent); overflow: hidden; }
+.update-bar i { display: block; height: 100%; background: var(--coral); transition: width .3s; }
 .side-status { display: flex; align-items: center; gap: 8px; width: 100%; }
 .chip { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); padding: 5px 10px; border-radius: 999px; background: var(--sunken); border: 1px solid var(--border); min-width: 0; flex: 1; }
 .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex: none; }

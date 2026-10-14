@@ -2,9 +2,40 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
 permissions: { contents: write }
+# Two merges in a row release one after the other instead of racing for the same tag.
+concurrency: { group: release, cancel-in-progress: false }
 jobs:
+  # Decides whether this push releases anything. Every merge to main runs it, but a release
+  # only happens when desktop/package.json carries a version that has no tag yet.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          TAG="v$(node -p "require('./desktop/package.json').version")"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            # The update feed carries package.json's version. A mismatched tag would publish files that
+            # installed apps consider "not newer", so nobody would be offered the release.
+            [ "$TAG" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME does not match desktop/package.json ($TAG)"; exit 1; }
+            RELEASE=true
+          elif git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG already released; bump desktop/package.json to ship a new version."
+            RELEASE=false
+          else
+            RELEASE=true
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     strategy:
       matrix: { os: [macos-latest, windows-latest] }
     runs-on: ${{ matrix.os }}
@@ -60,17 +91,28 @@ jobs:
           spctl --assess --type execute --verbose dist/mac-arm64/MuClaude.app
       - run: npx electron-builder --win --publish never
         if: runner.os == 'Windows'
+      - name: Verify the update feed files exist
+        shell: bash
+        run: |
+          # Without these an installed app never sees the release; fail the build instead of shipping silently.
+          if [ "$RUNNER_OS" = macOS ]; then want="latest-mac.yml"; else want="latest.yml"; fi
+          test -f "dist/$want" || { echo "::error::dist/$want was not generated"; ls dist; exit 1; }
+          cat "dist/$want"
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ runner.os }}
+          # latest*.yml + .zip + .blockmap are what installed apps read to self-update.
           path: |
             desktop/dist/*.dmg
+            desktop/dist/*.zip
             desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/latest*.yml
           if-no-files-found: error
 
   # One job publishes the release so the notes are written once, not once per OS.
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,18 +122,27 @@ jobs:
       # Notes list every commit since the previous stable tag with its author,
       # instead of GitHub's PR-only notes (direct pushes would be left out).
       - name: Write release notes
+        env: { TAG: "${{ needs.prepare.outputs.tag }}" }
         run: |
-          PREV=$(git describe --tags --abbrev=0 --exclude '*-*' "${GITHUB_REF_NAME}^" 2>/dev/null || true)
-          RANGE=${PREV:+$PREV..}$GITHUB_REF_NAME
+          # HEAD is the released commit for both triggers (the tag may not exist yet on a merge to main).
+          PREV=$(git describe --tags --abbrev=0 --exclude '*-*' HEAD^ 2>/dev/null || true)
+          RANGE=${PREV:+$PREV..}HEAD
           {
             echo "## Changes"
             git log --no-merges --format='* %s (%h) — %an' "$RANGE"
-            [ -n "$PREV" ] && echo && echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$GITHUB_REF_NAME"
+            [ -n "$PREV" ] && echo && echo "**Full Changelog**: https://github.com/$GITHUB_REPOSITORY/compare/$PREV...$TAG"
           } > notes.md
+      # On a merge to main this creates the tag at the merged commit. Tags created with GITHUB_TOKEN
+      # do not start another workflow run, so a release is never built twice.
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
           body_path: notes.md
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(needs.prepare.outputs.tag, '-') }}
           files: |
             dist/*.dmg
+            dist/*.zip
             dist/*.exe
+            dist/*.blockmap
+            dist/latest*.yml

@@ -8,6 +8,7 @@ const setup = require('./core/setup');
 const remove = require('./core/remove');
 const startup = require('./core/startup');
 const updateCheck = require('./core/update-check');
+const appUpdater = require('./core/app-updater');
 const codeProfiles = require('../code/profiles');
 const { installCli } = require('../code/install');
 const { addToPath } = require('../code/path');
@@ -22,6 +23,15 @@ const isMac = process.platform === 'darwin';
 let win = null;
 let dirtyCount = 0; // unapplied changes reported by the renderer
 let applying = false;
+const RELEASES_URL = 'https://github.com/Aplex2723/MuClaude/releases/latest';
+const updater = appUpdater.createUpdater({
+  // electron-updater is required lazily: unpackaged runs and tests never load it.
+  autoUpdater: app.isPackaged ? require('electron-updater').autoUpdater : null,
+  currentVersion: app.getVersion(),
+  reason: appUpdater.unsupportedReason({ isPackaged: app.isPackaged }),
+  log: (line) => console.log(line),
+  onChange: (state) => { if (win && !win.isDestroyed()) win.webContents.send('app-update:state', state); },
+});
 const googleLogin = isMac ? createGoogleLogin({
   helperApp: app.isPackaged ? path.join(process.resourcesPath, 'MuClaude Login Router.app')
     : path.join(__dirname, '../../build/login-router/MuClaude Login Router.app'),
@@ -228,6 +238,24 @@ function registerIpc() {
   handle('google-login:status', () => googleLogin ? googleLogin.status() : { active: false, status: 'unavailable' });
   handle('google-login:cancel', () => googleLogin ? googleLogin.cancel() : { active: false });
 
+  handle('app-update:state', () => updater.getState());
+  handle('app-update:check', () => updater.check());
+  handle('app-update:releases', () => shell.openExternal(RELEASES_URL));
+  handle('app-update:install', async () => {
+    if (updater.getState().status !== 'ready') return { ok: false, message: 'No update is ready yet.' };
+    if (applying) return { ok: false, message: 'Wait until the current changes finish applying, then restart.' };
+    if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before restarting.' };
+    if (dirtyCount > 0) {
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'warning', buttons: ['Keep editing', 'Discard and restart'], defaultId: 0, cancelId: 0,
+        message: `You have ${dirtyCount} unapplied change${dirtyCount > 1 ? 's' : ''}`, detail: 'Restarting to update will discard them.',
+      });
+      if (response === 0) return { ok: false, message: '' };
+      dirtyCount = 0; // already confirmed; do not ask again on window close
+    }
+    return { ok: updater.install(), message: '' };
+  });
+
   handle('folder:reveal', (_e, dir) => { const d = str(dir); if (require('fs').existsSync(d)) shell.showItemInFolder(d); });
 }
 
@@ -285,6 +313,7 @@ else {
       if (!open) { app.quit(); return; }
     }
     createWindow();
+    updater.start();
     if (process.argv.includes('--self-check')) selfCheck();
     app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   });

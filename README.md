@@ -39,6 +39,10 @@ MuClaude gives every account its own isolated profile and its own launcher, so t
 2. Open it and drag **MuClaude** to Applications.
 3. First launch only: **right-click the app, choose Open**, then confirm. (The app is ad-hoc signed, not notarized, so macOS asks once.)
 
+### Updates
+
+Installed builds (the macOS app and the Windows installer) update themselves: MuClaude checks GitHub Releases at launch and every few hours, downloads new versions in the background, and shows **Restart to update** in the sidebar. If you don't restart, the update installs the next time you quit. Check manually under **Settings**. The Windows portable `.exe` cannot update itself.
+
 ### Windows
 
 Download the installer or the portable `.exe` from the [latest release](https://github.com/Aplex2723/muClaude/releases/latest).
@@ -153,7 +157,7 @@ Click **Done / Cancel routing** once signed in. Routing also ends after a browse
 
 **Is this allowed?** It is an independent community tool and is **not affiliated with, endorsed by, or supported by Anthropic**. It launches the official app with separate profiles; check your organization's policies before using it with a work account.
 
-**Will my existing chats survive?** Yes. Existing profiles can be adopted, and chats stay in the profile folder. Nothing is uploaded anywhere, and MuClaude blocks all network access from its own window.
+**Will my existing chats survive?** Yes. Existing profiles can be adopted, and chats stay in the profile folder. Nothing is uploaded anywhere. MuClaude's window has no network access; the app only contacts GitHub, from its background process, to check for its own updates.
 
 **Does it work with the old Python tool's instances?** Yes, MuClaude reads and writes the same `instances.json` manifest.
 

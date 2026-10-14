@@ -64,7 +64,7 @@ Same behavior and file layout as the Python version, so existing instances keep 
 - Renderer is sandboxed: `contextIsolation`, `sandbox`, no Node, strict CSP, all remote
   requests blocked, no navigation or popups, permissions denied.
 - The preload exposes ten explicit functions; every IPC handler checks the sender and validates input.
-- No network code. No telemetry.
+- The only network code is the self-update check (`electron-updater` against this repo's GitHub Releases, run from the main process). No telemetry. The renderer still has no network access.
 - Deletion is confined to this tool's own locations, even if `instances.json` is tampered with
   (covered by tests). Profiles are only trashed if they are `Claude-<name>` folders under the data root.
 - macOS launcher scripts single-quote every value; tested with `'` in names.

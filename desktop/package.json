@@ -11,7 +11,7 @@
     "predev": "npm run build:login-router",
     "prestart": "npm run build:login-router",
     "start": "electron .",
-    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js",
+    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js scripts/test-app-updater.js",
     "build:login-router": "node scripts/build-login-router.js",
     "test:google-native": "node scripts/test-google-native.js",
     "test:google-ui": "electron scripts/test-google-ui.js",
@@ -56,6 +56,12 @@
           "arch": [
             "arm64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "hardenedRuntime": false
@@ -83,6 +89,19 @@
     "dmg": {
       "title": "MuClaude",
       "icon": "build/icon.icns"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Aplex2723",
+        "repo": "MuClaude"
+      }
+    ],
+    "nsis": {
+      "artifactName": "MuClaude-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "MuClaude-Portable-${version}.${ext}"
     }
   },
   "devDependencies": {
@@ -94,5 +113,8 @@
   "allowScripts": {
     "electron-winstaller": false,
     "electron@44.5.1": true
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }
