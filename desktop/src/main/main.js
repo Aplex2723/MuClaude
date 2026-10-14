@@ -10,6 +10,7 @@ const startup = require('./core/startup');
 const updateCheck = require('./core/update-check');
 const codeProfiles = require('../code/profiles');
 const { installCli } = require('../code/install');
+const { addToPath } = require('../code/path');
 const externalEnvs = require('../code/external');
 const { uninstallCode, formatReport } = require('../code/uninstall');
 const { createGoogleLogin } = require('./core/google-login');
@@ -134,7 +135,11 @@ function registerIpc() {
     return { ok: true };
   });
   handle('code:external-reveal', (_e, dir) => { shell.showItemInFolder(externalEnv(dir).dir); });
-  handle('code:install-cli', () => installCli({ home: P.HOME, target: cliTarget() }));
+  handle('code:install-cli', () => {
+    if (!isMac) throw new Error('The terminal command currently supports macOS only.');
+    const result = installCli({ home: P.HOME, target: cliTarget() });
+    return { ...result, path: addToPath({ home: P.HOME }) };
+  });
   handle('code:uninstall', async () => {
     if (!isMac) throw new Error('Code profiles currently support macOS only.');
     const profiles = codeProfiles.createStore(P.HOME).list();
@@ -143,7 +148,7 @@ function registerIpc() {
       type: 'warning', buttons: ['Cancel', 'Remove command only', 'Remove command and profile data'], defaultId: 0, cancelId: 0,
       message: 'Uninstall the muclaude terminal command?',
       detail: `${profiles.length ? `Profiles: ${profiles.join(', ')}.` : 'There are no Code profiles yet.'}\n\n`
-        + '“Remove command only” deletes ~/.local/bin/muclaude and keeps your profiles.\n\n'
+        + '“Remove command only” deletes ~/.local/bin/muclaude, removes the PATH lines MuClaude added to your shell startup file, and keeps your profiles.\n\n'
         + '“Remove command and profile data” also signs each profile out and permanently deletes its account, history and memory. Skills and settings in ~/.claude are kept.\n\n'
         + 'Close any running muclaude sessions first.',
     });
