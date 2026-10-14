@@ -406,7 +406,9 @@ test('npm run dev keeps muclaude-dev only while the server runs', async () => {
   const drive = (childCode) => spawn(process.execPath, ['-e',
     `require(${JSON.stringify(dev)}).main({ command: process.execPath, args: ['-e', ${JSON.stringify(childCode)}] }).then((code) => process.exit(code))`,
     ], { env: { ...process.env, HOME: devHome }, stdio: 'ignore' });
-  const until = async (check) => { for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 50)); return check(); };
+  // Polls tightly on purpose: the link appears while the child is still starting up, and the
+  // Ctrl+C below has to land as early as it can for the test to catch an unregistered handler.
+  const until = async (check) => { for (const end = Date.now() + 5000; Date.now() < end && !check();) await new Promise(setImmediate); return check(); };
   const exit = (child) => new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
 
   const server = drive('setInterval(() => {}, 1000)'); const stopped = exit(server);

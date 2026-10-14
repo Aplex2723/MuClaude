@@ -16,6 +16,17 @@ const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 function main({ command, args = [], home = os.homedir(), cwd = ROOT, log = console.log } = {}) {
   const binDir = defaultBinDir(home);
   let installed = false;
+  let child = null;
+  let killTimer = null;
+  // Registered before the link exists: the link is what tells a caller the server is up, so a
+  // Ctrl+C right after it appears must reach `stop` rather than Node's default handler, which
+  // would exit without forwarding the signal to Electron. Signals are delivered on the event
+  // loop, so by the time `stop` runs the child has been spawned.
+  const stop = () => {
+    child?.kill('SIGTERM');
+    killTimer ??= setTimeout(() => child?.kill('SIGKILL'), 5000);
+  };
+  for (const signal of SIGNALS) process.on(signal, stop);
   if (process.platform === 'darwin') {
     try {
       for (const stale of pruneStaleCli({ binDir })) log(`Removed stale command link ${stale}`);
@@ -34,19 +45,13 @@ function main({ command, args = [], home = os.homedir(), cwd = ROOT, log = conso
   process.on('exit', cleanup);
 
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' });
-    let killTimer = null;
-    const stop = () => {
-      child.kill('SIGTERM');
-      killTimer ??= setTimeout(() => child.kill('SIGKILL'), 5000);
-    };
-    for (const signal of SIGNALS) process.on(signal, stop);
     const finish = () => {
       clearTimeout(killTimer);
       for (const signal of SIGNALS) process.off(signal, stop);
       process.off('exit', cleanup);
       cleanup();
     };
+    try { child = spawn(command, args, { cwd, stdio: 'inherit' }); } catch (error) { finish(); reject(error); return; }
     child.once('error', (error) => { finish(); reject(error); });
     child.once('exit', (code, signal) => { finish(); resolve(code ?? 128 + (os.constants.signals[signal] || 1)); });
   });
