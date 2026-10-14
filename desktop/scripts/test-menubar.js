@@ -66,13 +66,16 @@ async function boot({ platform = 'darwin', manifest = [], trayFails = false, arg
   };
   const mocks = { electron, './core/platform': P, './core/icons': {}, './core/startup': {}, './core/update-check': {},
     './core/remove': { knownInstances: () => known, removeInstances: (...a) => operation(...a) },
-    './core/setup': { run: (...a) => operation(...a) }, '../code/profiles': {}, '../code/install': {}, '../code/uninstall': {}, '../code/external': { discover: () => [] },
+    './core/setup': { run: (...a) => operation(...a) }, '../code/profiles': {}, '../code/install': {}, '../code/uninstall': {}, '../code/path': {}, '../code/external': { discover: () => [] },
     './core/google-login': { createGoogleLogin: () => ({ status: () => ({ active }), cancel: async () => { cancelled++; if (cancelError) throw cancelError; active = false; } }) },
     './core/launcher': {},
   };
   const filename = path.join(__dirname, '../src/main/main.js');
   vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
-    require: id => id in mocks ? mocks[id] : require(id), __dirname: path.dirname(filename),
+    // Every local module is mocked so no handler can touch the real home; a new main.js
+    // dependency must be added to `mocks` (resolving it from scripts/ would only find nothing).
+    require: id => { if (id in mocks) return mocks[id]; if (id.startsWith('.')) throw Error(`test-menubar: add a mock for ${id} required by main.js`); return require(id); },
+    __dirname: path.dirname(filename),
     process: { platform, argv: args, resourcesPath: '/resources' }, console: { log() {}, error() {} }, setTimeout,
   }, { filename });
   await tick(); await tick();
