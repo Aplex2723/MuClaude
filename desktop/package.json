@@ -11,7 +11,7 @@
     "predev": "npm run build:login-router",
     "prestart": "npm run build:login-router",
     "start": "electron .",
-    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js scripts/test-app-updater.js",
+    "test": "node scripts/test-core.js && node --test scripts/test-code.js scripts/test-google-login.js scripts/test-app-updater.js scripts/test-menubar.js",
     "build:login-router": "node scripts/build-login-router.js",
     "test:google-native": "node scripts/test-google-native.js",
     "test:google-ui": "electron scripts/test-google-ui.js",
@@ -22,7 +22,8 @@
     "install:mac": "bash scripts/install-mac.sh",
     "dist:win": "electron-builder --win",
     "selfcheck": "electron . --self-check",
-    "test:code-ui": "electron scripts/test-code-ui.js"
+    "test:code-ui": "electron scripts/test-code-ui.js",
+    "test:menubar-ui": "electron scripts/test-menubar-ui.js"
   },
   "build": {
     "beforePack": "scripts/before-pack.js",

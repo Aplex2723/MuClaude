@@ -1,12 +1,14 @@
 'use strict';
 
 const path = require('path');
-const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, session } = require('electron');
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, nativeTheme, shell, session } = require('electron');
 const P = require('./core/platform');
 const icons = require('./core/icons');
 const setup = require('./core/setup');
 const remove = require('./core/remove');
 const startup = require('./core/startup');
+const loginItem = require('./core/login-item');
+const { createMenubar, launcherIcon } = require('./core/menubar');
 const updateCheck = require('./core/update-check');
 const appUpdater = require('./core/app-updater');
 const codeProfiles = require('../code/profiles');
@@ -23,6 +25,13 @@ const isMac = process.platform === 'darwin';
 let win = null;
 let dirtyCount = 0; // unapplied changes reported by the renderer
 let applying = false;
+// macOS: MuClaude lives in the menu bar. The window's close button only hides it (and the Dock icon);
+// the app really quits from the menu, with Cmd+Q, or to install an update.
+let menubar = null;
+let quitting = false;
+let quitConfirmed = false; // unapplied changes were already asked about
+const startHidden = isMac && process.argv.includes(loginItem.HIDDEN_ARG);
+const TRAY_ICON = path.join(__dirname, 'assets', 'trayTemplate.png');
 const RELEASES_URL = 'https://github.com/Aplex2723/MuClaude/releases/latest';
 const updater = appUpdater.createUpdater({
   // electron-updater is required lazily: unpackaged runs and tests never load it.
@@ -55,9 +64,13 @@ function createWindow() {
       webSecurity: true, spellcheck: false,
     },
   });
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); if (menubar) app.focus({ steal: true }); });
   win.on('closed', () => { win = null; });
   win.on('close', (e) => {
+    if (menubar) { // before-quit asks about unapplied changes when the app really quits
+      if (!quitting) { e.preventDefault(); hideWindow(); }
+      return;
+    }
     if (applying) {
       e.preventDefault();
       dialog.showMessageBoxSync(win, { type: 'info', message: 'Still applying changes', detail: 'Please wait a moment until it finishes, then quit.', buttons: ['OK'] });
@@ -72,6 +85,27 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(INDEX);
+}
+
+/** Shows the window, creating it if it was never opened or is gone. The Dock icon follows the window. */
+async function revealWindow() {
+  if (isMac && app.dock) await app.dock.show().catch(() => {}); // without the Dock icon the window still shows
+  showWindowNow();
+}
+function showWindowNow() {
+  if (!win || win.isDestroyed()) { createWindow(); return; } // shows itself once it has loaded
+  if (win.webContents.isLoading()) return; // still opening: ready-to-show will show it, and showing now would flash a blank window
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  if (isMac) app.focus({ steal: true });
+}
+function hideWindow() {
+  if (!win || win.isDestroyed()) return;
+  // a window hidden while full screen leaves its blank space behind
+  if (win.isFullScreen()) { win.once('leave-full-screen', hideWindow); win.setFullScreen(false); return; }
+  win.hide();
+  if (app.dock) app.dock.hide();
 }
 
 /** Only our own window may call the IPC handlers. */
@@ -105,7 +139,61 @@ async function describeState() {
     palette: icons.PALETTE, instances,
     updateCheck: process.platform === 'win32' ? await updateCheck.isRegistered() || !P.loadManifest().length : false,
     dark: nativeTheme.shouldUseDarkColors,
+    loginItem: loginItemSupported() ? loginItem.isEnabled() : null, // null: this build cannot start at sign-in
   };
+}
+
+// Starting at sign-in needs an installed app: an unpackaged run would launch a bare Electron.
+const loginItemSupported = () => isMac && app.isPackaged;
+
+// ---- actions shared by the window and the menu bar ---------------------------
+
+/** Opens an instance's launcher app, the same as clicking it in ~/Applications. */
+async function openInstance(name) {
+  const inst = remove.knownInstances().find((i) => i.name.toLowerCase() === str(name, 200).toLowerCase());
+  if (!inst) return { ok: false, message: 'Unknown instance.' };
+  const target = process.platform === 'win32'
+    ? inst.files.find((f) => f.endsWith('.lnk') && f.startsWith(P.rootInstallDir()))
+    : inst.files.find((f) => f.endsWith('.app'));
+  if (!target) return { ok: false, message: 'Apply your changes first; this instance has no launcher yet.' };
+  const err = await shell.openPath(target);
+  return { ok: !err, message: err };
+}
+
+/** Restarts into a downloaded update, after the checks that keep unapplied work from being lost. */
+async function restartToUpdate() {
+  if (updater.getState().status !== 'ready') return { ok: false, message: 'No update is ready yet.' };
+  if (applying) return { ok: false, message: 'Wait until the current changes finish applying, then restart.' };
+  if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before restarting.' };
+  if (dirtyCount > 0) {
+    await revealWindow(); // the question is about what is in the window
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning', buttons: ['Keep editing', 'Discard and restart'], defaultId: 0, cancelId: 0,
+      message: `You have ${dirtyCount} unapplied change${dirtyCount > 1 ? 's' : ''}`, detail: 'Restarting to update will discard them.',
+    });
+    if (response === 0) return { ok: false, message: '' };
+    dirtyCount = 0; // already confirmed; do not ask again on quit
+  }
+  // installing closes every window first, so they must close instead of hiding
+  quitting = true; quitConfirmed = true;
+  const ok = updater.install();
+  if (!ok) { quitting = false; quitConfirmed = false; }
+  return { ok, message: '' };
+}
+
+/** macOS: closing the window only hides it, so the unapplied-changes warning belongs to quitting. */
+function confirmQuit() {
+  if (!applying && dirtyCount === 0) return true;
+  if (!win || win.isDestroyed()) return true;
+  if (!win.isVisible()) { showWindowNow(); if (app.dock) app.dock.show(); } // a hidden window cannot show the dialog
+  if (applying) {
+    dialog.showMessageBoxSync(win, { type: 'info', message: 'Still applying changes', detail: 'Please wait a moment until it finishes, then quit.', buttons: ['OK'] });
+    return false;
+  }
+  return dialog.showMessageBoxSync(win, {
+    type: 'warning', buttons: ['Keep editing', 'Discard and quit'], defaultId: 0, cancelId: 0,
+    message: `You have ${dirtyCount} unapplied change${dirtyCount > 1 ? 's' : ''}`, detail: 'Quitting now will discard them.',
+  }) === 1;
 }
 
 const str = (v, max = 4096) => { if (typeof v !== 'string' || v.length > max) throw new Error('bad argument'); return v; };
@@ -209,16 +297,7 @@ function registerIpc() {
     try { return await remove.removeInstances(opts.names.map((n) => str(n, 200)), { deleteData: opts.deleteData === true, uninstall: opts.uninstall === true, log }); } finally { applying = false; }
   });
 
-  handle('instance:open', async (_e, name) => {
-    const inst = remove.knownInstances().find((i) => i.name.toLowerCase() === str(name, 200).toLowerCase());
-    if (!inst) return { ok: false, message: 'Unknown instance.' };
-    const target = process.platform === 'win32'
-      ? inst.files.find((f) => f.endsWith('.lnk') && f.startsWith(P.rootInstallDir()))
-      : inst.files.find((f) => f.endsWith('.app'));
-    if (!target) return { ok: false, message: 'Apply your changes first; this instance has no launcher yet.' };
-    const err = await shell.openPath(target);
-    return { ok: !err, message: err };
-  });
+  handle('instance:open', (_e, name) => openInstance(name));
 
   handle('google-login:begin', async (_e, name) => {
     if (!googleLogin) return { ok: false, message: 'Google sign-in routing currently supports macOS only.' };
@@ -241,19 +320,12 @@ function registerIpc() {
   handle('app-update:state', () => updater.getState());
   handle('app-update:check', () => updater.check());
   handle('app-update:releases', () => shell.openExternal(RELEASES_URL));
-  handle('app-update:install', async () => {
-    if (updater.getState().status !== 'ready') return { ok: false, message: 'No update is ready yet.' };
-    if (applying) return { ok: false, message: 'Wait until the current changes finish applying, then restart.' };
-    if (googleLogin?.status().active) return { ok: false, message: 'Finish or cancel Google sign-in before restarting.' };
-    if (dirtyCount > 0) {
-      const { response } = await dialog.showMessageBox(win, {
-        type: 'warning', buttons: ['Keep editing', 'Discard and restart'], defaultId: 0, cancelId: 0,
-        message: `You have ${dirtyCount} unapplied change${dirtyCount > 1 ? 's' : ''}`, detail: 'Restarting to update will discard them.',
-      });
-      if (response === 0) return { ok: false, message: '' };
-      dirtyCount = 0; // already confirmed; do not ask again on window close
-    }
-    return { ok: updater.install(), message: '' };
+  handle('app-update:install', () => restartToUpdate());
+
+  handle('login-item:set', (_e, on) => {
+    if (!loginItemSupported()) throw new Error('Starting at sign-in needs the installed MuClaude app.');
+    loginItem.setEnabled(on === true, process.execPath);
+    return loginItem.isEnabled();
   });
 
   handle('folder:reveal', (_e, dir) => { const d = str(dir); if (require('fs').existsSync(d)) shell.showItemInFolder(d); });
@@ -289,19 +361,49 @@ async function selfCheck() {
   console.log('SELFCHECK FAILED: the UI did not render'); app.exit(1);
 }
 
+// ---- menu bar ----------------------------------------------------------------
+
+/** Instances that have a launcher to open: the menu lists the same ones the window can open. */
+function menubarInstances() {
+  return remove.knownInstances().flatMap((i) => { const appPath = i.files.find((f) => f.endsWith('.app')); return appPath ? [{ name: i.name, appPath }] : []; });
+}
+
+function createMenubarIcon() {
+  const icon = nativeImage.createFromPath(TRAY_ICON);
+  icon.setTemplateImage(true);
+  const notify = (message) => dialog.showMessageBox({ type: 'info', message });
+  menubar = createMenubar({
+    Tray, Menu, icon, listInstances: menubarInstances, loadIcon: (appPath) => launcherIcon({ nativeImage }, appPath), getUpdate: () => updater.getState(),
+    log: (line) => console.log(line),
+    actions: {
+      openInstance: async (name) => { const r = await openInstance(name).catch((e) => ({ ok: false, message: e.message })); if (!r.ok) notify(`Could not open ${name}. ${r.message}`); },
+      showWindow: () => revealWindow(),
+      restartToUpdate: async () => { const r = await restartToUpdate().catch((e) => ({ ok: false, message: e.message })); if (!r.ok && r.message) notify(r.message); },
+      quit: () => app.quit(),
+    },
+  });
+  menubar.warm();
+}
+
 // ---- lifecycle ---------------------------------------------------------------
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   let cancellingLoginForQuit = false;
   app.on('before-quit', (event) => {
+    if (menubar && !quitConfirmed) {
+      if (!confirmQuit()) { event.preventDefault(); return; }
+      quitConfirmed = true;
+    }
+    quitting = true;
     if (!googleLogin?.status().active) return;
     event.preventDefault();
     if (cancellingLoginForQuit) return;
     cancellingLoginForQuit = true;
     googleLogin.cancel().then(() => { cancellingLoginForQuit = false; app.quit(); });
   });
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  // no window and no menu bar yet: startup is still asking about updates (Windows sign-in), which creates the window itself
+  app.on('second-instance', () => { if (win || menubar) revealWindow(); });
 
   app.whenReady().then(async () => {
     // deny every permission request and block remote content outright
@@ -312,10 +414,20 @@ else {
       const open = await runUpdateCheck();
       if (!open) { app.quit(); return; }
     }
-    createWindow();
+    if (isMac) {
+      try { createMenubarIcon(); } catch (e) { console.log(`menu bar unavailable: ${e.message}`); } // without it, closing the window quits as before
+      if (loginItemSupported()) { try { loginItem.refresh(process.execPath); } catch (_) { /* the entry is rewritten next time */ } }
+    }
+    if (startHidden && menubar) { if (app.dock) app.dock.hide(); } else createWindow();
     updater.start();
     if (process.argv.includes('--self-check')) selfCheck();
-    app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
+    const launchedAt = Date.now();
+    app.on('activate', () => {
+      // opening MuClaude again (Spotlight, Finder) brings the window back; ignore the launch itself when started hidden
+      if (startHidden && Date.now() - launchedAt < 3000) return;
+      revealWindow();
+    });
   });
-  app.on('window-all-closed', () => app.quit());
+  // The menu-bar app keeps running without a window; it is only over once it is quitting.
+  app.on('window-all-closed', () => { if (!menubar || quitting) app.quit(); });
 }
